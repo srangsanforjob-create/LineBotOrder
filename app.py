@@ -176,6 +176,8 @@ def codes_text(o):
 
 
 def total_text(rows):
+    t = {c: sum(r.get(c, 0) for r in rows) for c in COES if c in CODES} # ป้องกัน error เพิ่มเติม
+    # ใช้ sum ปกติจาก CODES
     t = {c: sum(r.get(c, 0) for r in rows) for c in CODES}
     total_qty = sum(t.values())
     details = codes_text(t)
@@ -288,4 +290,14 @@ def compact(title, d1, d2):
     for r in rows:
         by.setdefault(r["ddate"], []).append(r)
     lines = [f"📅 {title}", ""]
-    for d,
+    for d, rs in sorted(by.items()):
+        lines.append(f"--- {dmy(d)} ---")
+        for i, r in enumerate(rs, 1):
+            sh = shop_by_id(r["shop_id"])
+            name = sh["name"] if sh else "?"
+            st = STATUSES.get(r["status"])
+            emo = st[0] if st else ""
+            lines.append(f"{i}. {name} {codes_text(r)} {emo}".strip())
+        lines.append(f"รวม: {total_text(rs)}")
+        lines.append("")
+    return text("\n".join(lines).strip())
