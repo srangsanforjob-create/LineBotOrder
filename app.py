@@ -232,6 +232,26 @@ def add_alias(shop_id, name):
         update("shops", s)
 
 
+def order_form_flex():
+    """สร้าง Flex Message สำหรับเปิดฟอร์มหรือคำแนะนำในการสั่งซื้อสินค้า"""
+    return {
+        "type": "flex",
+        "altText": "ฟอร์มสั่งซื้อสินค้า",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": "📝 ฟอร์มสั่งซื้อสินค้า", "weight": "bold", "size": "lg"},
+                    {"type": "text", "text": "กรุณาพิมพ์ชื่อร้านและรายการสินค้าที่ต้องการสั่ง เช่น:\n\n[ชื่อร้าน] [รหัสสินค้า][จำนวน]\nตัวอย่าง: ร้าน A L2 D1", "wrap": True, "size": "sm", "color": "#555555"}
+                ]
+            }
+        }
+    }
+
+
 def flex_dates(dates):
     bubbles = []
     for d in dates[:12]:
@@ -280,27 +300,6 @@ def flex_dates(dates):
             "contents": {"type": "carousel", "contents": bubbles}}
 
 
-def compact(title, d1, d2):
-    rows = orders_between(d1, d2)
-    if not rows:
-        return text("ไม่มีออเดอร์ในช่วงนี้")
-    by = {}
-    for r in rows:
-        by.setdefault(r["ddate"], []).append(r)
-    lines = [f"📅 {title}", ""]
-    for d, rs in sorted(by.items()):
-        lines.append(f"--- {dmy(d)} ---")
-        for i, r in enumerate(rs, 1):
-            sh = shop_by_id(r["shop_id"])
-            name = sh["name"] if sh else "?"
-            st = STATUSES.get(r["status"])
-            emo = st[0] if st else ""
-            lines.append(f"{i}. {name} {codes_text(r)} {emo}".strip())
-        lines.append(f"รวม: {total_text(rs)}")
-        lines.append("")
-    return text("\n".join(lines).strip())
-
-
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -324,26 +323,8 @@ def callback():
                 with LOCK:
                     load()
                     
-                # ตัวอย่าง: พิมพ์ "สรุป" หรือ "order" เพื่อเรียกดูรายการออเดอร์
-                if user_message.lower() in ["สรุป", "order", "orders"]:
-                    dates = upcoming_dates()
-                    flex_content = flex_dates(dates)
-                    
-                    headers = {
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {TOKEN}"
-                    }
-                    payload = {
-                        "replyToken": reply_token,
-                        "messages": [flex_content] if isinstance(flex_content, dict) else [text(flex_content)]
-                    }
-                    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
-    except Exception as e:
-        traceback.print_exc()
-
-    return "OK"
-
-
-if __name__ == "__main__":
-    load()
-    app.run(host="0.0.0.0", port=10000)
+                # หากพิมพ์ "order" หรือ "สั่งซื้อ" ให้แสดงฟอร์มสั่งซื้อ
+                if user_message.lower() in ["order", "สั่งซื้อ", "สั่งของ"]:
+                    flex_content = order_form_flex()
+                # หากพิมพ์ "สรุป" หรือ "orders" ให้แสดงรายการสรุปออเดอร์
+                elif user_message.
