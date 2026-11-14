@@ -39,12 +39,10 @@ STATUSES = {
     "short": ("❗", "วงเงินไม่พอ"),
 }
 AUTO_MATCH = 0.85
-ASK_MATCH = 0.60
 
 app = Flask(__name__)
 LOCK = threading.Lock()
 
-# เก็บตะกร้าชั่วคราวและสถานะการพิมพ์ของแต่ละ User
 USER_SESSIONS = {}
 
 COLS = {
@@ -126,6 +124,14 @@ def add(tab, d):
 
 def update(tab, d):
     sheet_update(tab, d["_row"], [d.get(c, "") for c in COLS[tab]])
+
+
+def remove(tab, d):
+    sheet_delete(tab, d["_row"])
+    DATA[tab].remove(d)
+    for x in DATA[tab]:
+        if x["_row"] > d["_row"]:
+            x["_row"] -= 1
 
 
 def shop_by_id(sid):
@@ -224,7 +230,7 @@ def get_or_create_shop(name):
 
 def get_session(user_id):
     if user_id not in USER_SESSIONS:
-        USER_SESSIONS[user_id] = {"items": {}, "step": None, "pending_code": None}
+        USER_SESSIONS[user_id] = {"items": {}, "step": None, "pending_code": None, "edit_order_id": None}
     return USER_SESSIONS[user_id]
 
 
@@ -239,6 +245,9 @@ def cart_summary(items):
 def flex_category_menu(user_id):
     sess = get_session(user_id)
     items = sess["items"]
+    edit_id = sess.get("edit_order_id")
+
+    title_text = f"✏️ แก้ไขออเดอร์ #{edit_id}" if edit_id else "🛒 เลือกหมวดหมู่สินค้า"
 
     cat_buttons = []
     for cat in PRODUCT_CATEGORIES.keys():
@@ -250,7 +259,7 @@ def flex_category_menu(user_id):
         })
 
     body_contents = [
-        {"type": "text", "text": "🛒 เลือกหมวดหมู่สินค้า", "weight": "bold", "size": "lg"},
+        {"type": "text", "text": title_text, "weight": "bold", "size": "lg"},
         {"type": "separator", "margin": "sm"},
         {
             "type": "box",
@@ -258,7 +267,7 @@ def flex_category_menu(user_id):
             "spacing": "xs",
             "margin": "sm",
             "contents": [
-                {"type": "text", "text": "รายการที่เลือกไว้:", "size": "xs", "color": "#888888"},
+                {"type": "text", "text": "รายการสินค้า:", "size": "xs", "color": "#888888"},
                 {"type": "text", "text": cart_summary(items), "size": "sm", "wrap": True, "weight": "bold"}
             ]
         },
@@ -268,19 +277,20 @@ def flex_category_menu(user_id):
 
     footer_contents = []
     if items:
+        btn_label = "✅ บันทึกการแก้ไข" if edit_id else "✅ ยืนยันรายการ / ใส่ชื่อร้าน"
         footer_contents.append({
             "type": "button",
             "style": "primary",
             "color": "#06C755",
             "height": "sm",
-            "action": {"type": "postback", "label": "✅ ยืนยันรายการ / ใส่ชื่อร้าน", "data": "checkout"}
+            "action": {"type": "postback", "label": btn_label, "data": "checkout"}
         })
         footer_contents.append({
             "type": "button",
             "style": "link",
             "height": "sm",
             "color": "#FF3B30",
-            "action": {"type": "postback", "label": "🗑️ ล้างรายการทั้งหมด", "data": "clear_cart"}
+            "action": {"type": "postback", "label": "🗑️ ล้างรายการ", "data": "clear_cart"}
         })
 
     bubble = {
@@ -290,7 +300,7 @@ def flex_category_menu(user_id):
     if footer_contents:
         bubble["footer"] = {"type": "box", "layout": "vertical", "spacing": "xs", "contents": footer_contents}
 
-    return {"type": "flex", "altText": "ฟอร์มเลือกสั่งซื้อสินค้า", "contents": bubble}
+    return {"type": "flex", "altText": "ฟอร์มเลือกสินค้า", "contents": bubble}
 
 
 def flex_items_in_category(cat, user_id):
@@ -356,7 +366,7 @@ def flex_items_in_category(cat, user_id):
                 "style": "primary",
                 "color": "#06C755",
                 "height": "sm",
-                "action": {"type": "postback", "label": "✅ สรุป/สั่งซื้อ", "data": "checkout"}
+                "action": {"type": "postback", "label": "✅ ตะกร้าสินค้า", "data": "menu"}
             }
         ]
     }
@@ -373,14 +383,15 @@ def flex_items_in_category(cat, user_id):
     }
 
 
-def flex_status_picker(order_id):
+def flex_order_actions(order_id):
+    """การ์ดจัดการออเดอร์: รวมปุ่มเปลี่ยนสถานะ, แก้ไข และลบออเดอร์ไว้ในที่เดียว"""
     o = order_by_id(order_id)
     if not o:
         return text("ไม่พบออเดอร์นี้")
 
-    btns = []
+    status_buttons = []
     for k, (emo, label) in STATUSES.items():
-        btns.append({
+        status_buttons.append({
             "type": "button",
             "style": "primary" if o["status"] == k else "secondary",
             "height": "sm",
@@ -389,7 +400,7 @@ def flex_status_picker(order_id):
 
     return {
         "type": "flex",
-        "altText": "เปลี่ยนสถานะออเดอร์",
+        "altText": f"จัดการออเดอร์ #{order_id}",
         "contents": {
             "type": "bubble",
             "body": {
@@ -397,10 +408,36 @@ def flex_status_picker(order_id):
                 "layout": "vertical",
                 "spacing": "sm",
                 "contents": [
-                    {"type": "text", "text": f"เปลี่ยนสถานะ #{order_id}", "weight": "bold", "size": "md"},
+                    {"type": "text", "text": f"จัดการออเดอร์ #{order_id}", "weight": "bold", "size": "md"},
                     {"type": "text", "text": f"{o['name']} ({dmy(o['ddate'])})", "size": "sm", "color": "#555555"},
-                    {"type": "separator"},
-                    *btns
+                    {"type": "text", "text": f"รายการ: {codes_text(o)}", "size": "xs", "color": "#666666", "wrap": True},
+                    {"type": "separator", "margin": "md"},
+                    {"type": "text", "text": "เปลี่ยนสถานะ:", "size": "xs", "weight": "bold", "color": "#888888"},
+                    *status_buttons,
+                    {"type": "separator", "margin": "md"},
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "color": "#1D4ED8",
+                                "action": {"type": "postback", "label": "✏️ แก้ไขรายการ", "data": f"edit|{order_id}"},
+                                "flex": 1
+                            },
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "color": "#DC2626",
+                                "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"},
+                                "flex": 1
+                            }
+                        ]
+                    }
                 ]
             }
         }
@@ -555,16 +592,29 @@ def callback():
                         if not sess["items"]:
                             reply_line(reply_token, text("ยังไม่ได้เลือกสินค้าเลยครับ กรุณากดเลือกสินค้าก่อน"))
                         else:
-                            sess["step"] = "await_shop_date"
-                            summary = cart_summary(sess["items"])
-                            reply_line(
-                                reply_token,
-                                text(f"📋 รายการที่เลือก:\n{summary}\n\nกรุณาพิมพ์ **ชื่อร้าน และวันที่ส่ง**\nเช่น: สะออน ส่ง 15 (หรือ สะออน 15/11)")
-                            )
+                            edit_id = sess.get("edit_order_id")
+                            if edit_id:
+                                o = next((x for x in DATA["orders"] if x["id"] == edit_id), None)
+                                if o:
+                                    for c in CODES:
+                                        o[c] = sess["items"].get(c, 0)
+                                    update("orders", o)
+                                sess["items"] = {}
+                                sess["edit_order_id"] = None
+                                sess["step"] = None
+                                dates = upcoming_dates()
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                sess["step"] = "await_shop_date"
+                                summary = cart_summary(sess["items"])
+                                reply_line(
+                                    reply_token,
+                                    text(f"📋 รายการที่เลือก:\n{summary}\n\nกรุณาพิมพ์ **ชื่อร้าน และวันที่ส่ง**\nเช่น: สะออน ส่ง 15 (หรือ สะออน 15/11)")
+                                )
 
                     elif action == "pick" and len(parts) > 1:
                         oid = int(parts[1])
-                        reply_line(reply_token, flex_status_picker(oid))
+                        reply_line(reply_token, flex_order_actions(oid))
 
                     elif action == "set_status" and len(parts) > 2:
                         oid, new_st = int(parts[1]), parts[2]
@@ -572,10 +622,25 @@ def callback():
                         if o and new_st in STATUSES:
                             o["status"] = new_st
                             update("orders", o)
-                            emo, st_name = STATUSES[new_st]
-                            sh = shop_by_id(o["shop_id"])
-                            sname = sh["name"] if sh else "?"
-                            reply_line(reply_token, text(f"อัปเดตสถานะ #{oid} ({sname}) เป็น {emo} {st_name} เรียบร้อยแล้วครับ"))
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
+                    elif action == "delete" and len(parts) > 1:
+                        oid = int(parts[1])
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o:
+                            remove("orders", o)
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
+                    elif action == "edit" and len(parts) > 1:
+                        oid = int(parts[1])
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o:
+                            sess["edit_order_id"] = oid
+                            sess["items"] = {c: o[c] for c in CODES if o.get(c, 0) > 0}
+                            sess["step"] = None
+                            reply_line(reply_token, flex_category_menu(user_id))
 
                 elif etype == "message" and event.get("message", {}).get("type") == "text":
                     user_message = event["message"]["text"].strip()
@@ -583,12 +648,35 @@ def callback():
 
                     if low in ["order", "สั่งซื้อ", "สั่งของ"]:
                         sess["step"] = None
+                        sess["edit_order_id"] = None
+                        sess["items"] = {}
                         reply_line(reply_token, flex_category_menu(user_id))
 
                     elif low in ["สรุป", "orders"]:
                         sess["step"] = None
                         dates = upcoming_dates()
                         reply_line(reply_token, flex_dates(dates))
+
+                    # รองรับคีย์เวิร์ด "ยกเลิก [ชื่อร้าน]" เช่น "ยกเลิก สะออน"
+                    elif low.startswith("ยกเลิก"):
+                        target_name = user_message[6:].strip()
+                        if target_name:
+                            cands = candidates(target_name)
+                            if cands and cands[0][0] >= ASK_MATCH:
+                                shop_id = cands[0][1]["id"]
+                                matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
+                                if matched_orders:
+                                    # ลบออเดอร์ล่าสุดของร้านนั้น
+                                    to_remove = max(matched_orders, key=lambda x: x["id"])
+                                    remove("orders", to_remove)
+                                    dates = upcoming_dates()
+                                    reply_line(reply_token, flex_dates(dates))
+                                else:
+                                    reply_line(reply_token, text(f"ไม่พบออเดอร์ของร้าน {target_name} ครับ"))
+                            else:
+                                reply_line(reply_token, text(f"ไม่พบชื่อร้าน {target_name} ในระบบครับ"))
+                        else:
+                            reply_line(reply_token, text("กรุณาระบุชื่อร้านที่ต้องการยกเลิก เช่น: ยกเลิก สะออน"))
 
                     elif sess["step"] == "await_qty" and sess["pending_code"]:
                         code, cat = sess["pending_code"]
@@ -606,19 +694,11 @@ def callback():
 
                     elif sess["step"] == "await_shop_date":
                         shop_name, ddate_iso = parse_shop_and_date(user_message)
-                        saved = save_order_to_sheet(shop_name, ddate_iso, sess["items"], user_id)
+                        save_order_to_sheet(shop_name, ddate_iso, sess["items"], user_id)
                         sess["items"] = {}
                         sess["step"] = None
-                        reply_line(
-                            reply_token,
-                            text(
-                                f"✅ บันทึกออเดอร์เรียบร้อย!\n"
-                                f"ร้าน: {saved['name']}\n"
-                                f"วันที่ส่ง: {dmy(saved['ddate'])}\n"
-                                f"รายการ: {codes_text(saved)}\n"
-                                f"สถานะ: {STATUSES[saved['status']][0]} {STATUSES[saved['status']][1]}"
-                            )
-                        )
+                        dates = upcoming_dates()
+                        reply_line(reply_token, flex_dates(dates))
 
                     else:
                         tokens = user_message.split()
@@ -634,17 +714,9 @@ def callback():
 
                         if found_items:
                             shop_name, ddate_iso = parse_shop_and_date(" ".join(remaining_tokens))
-                            saved = save_order_to_sheet(shop_name, ddate_iso, found_items, user_id)
-                            reply_line(
-                                reply_token,
-                                text(
-                                    f"✅ บันทึกออเดอร์เรียบร้อย!\n"
-                                    f"ร้าน: {saved['name']}\n"
-                                    f"วันที่ส่ง: {dmy(saved['ddate'])}\n"
-                                    f"รายการ: {codes_text(saved)}\n"
-                                    f"สถานะ: {STATUSES[saved['status']][0]} {STATUSES[saved['status']][1]}"
-                                )
-                            )
+                            save_order_to_sheet(shop_name, ddate_iso, found_items, user_id)
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
 
     except Exception:
         traceback.print_exc()
