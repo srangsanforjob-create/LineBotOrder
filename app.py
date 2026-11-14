@@ -327,4 +327,28 @@ def callback():
                 if user_message.lower() in ["order", "สั่งซื้อ", "สั่งของ"]:
                     flex_content = order_form_flex()
                 # หากพิมพ์ "สรุป" หรือ "orders" ให้แสดงรายการสรุปออเดอร์
-                elif user_message.
+                elif user_message.lower() in ["สรุป", "orders"]:
+                    dates = upcoming_dates()
+                    flex_content = flex_dates(dates)
+                else:
+                    # ตัวอย่างรองรับข้อความอื่นๆ (ถ้ามี)
+                    continue
+                    
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {TOKEN}"
+                }
+                payload = {
+                    "replyToken": reply_token,
+                    "messages": [flex_content] if isinstance(flex_content, dict) else [text(flex_content)]
+                }
+                requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+    except Exception as e:
+        traceback.print_exc()
+
+    return "OK"
+
+
+if __name__ == "__main__":
+    load()
+    app.run(host="0.0.0.0", port=10000)
