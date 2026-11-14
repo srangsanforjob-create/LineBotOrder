@@ -59,13 +59,15 @@ def _spreadsheet():
     global _ss
     if _ss is None:
         import gspread
-        creds_raw = os.environ.get("GOOGLE_CREDENTIALS", "")
+        # เปลี่ยนชื่อไฟล์ตรงนี้ให้ตรงกับชื่อไฟล์ที่คุณตั้งใน Secret Files บน Render
+        secret_path = "/etc/secrets/driven-current-323807-98d50517d033.json"
+        
         try:
-            creds_dict = json.loads(creds_raw)
-        except json.JSONDecodeError as e:
-            print(f"❌ ERROR: GOOGLE_CREDENTIALS รูปแบบ JSON ไม่ถูกต้อง: {e}")
+            gc = gspread.service_account(filename=secret_path)
+        except Exception as e:
+            print(f"❌ ERROR: ไม่สามารถอ่านไฟล์ Secret Credentials ได้: {e}")
             raise
-        gc = gspread.service_account_from_dict(creds_dict)
+            
         _ss = gc.open_by_key(os.environ["SHEET_ID"])
         have = {w.title for w in _ss.worksheets()}
         for tab, cols in COLS.items():
