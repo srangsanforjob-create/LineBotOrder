@@ -33,7 +33,7 @@ CODES = list(PRODUCT_CODES.keys())
 
 STATUSES = {
     "ordered": ("✅", "Order แล้ว"),
-    "slip": ("👍", "อัพสลิปแล้ว"),
+    "slip": ("👍", "อัปสลิปแล้ว"),
     "credit": ("💳", "Credit"),
     "overdue": ("❌", "Overdue"),
     "short": ("❗", "วงเงินไม่พอ"),
@@ -411,7 +411,7 @@ def flex_order_actions(order_id):
                     {"type": "text", "text": f"{o['name']} ({dmy(o['ddate'])})", "size": "sm", "color": "#555555"},
                     {"type": "text", "text": f"รายการ: {codes_text(o)}", "size": "xs", "color": "#666666", "wrap": True},
                     {"type": "separator", "margin": "md"},
-                    {"type": "text", "text": "เปลี่ยนสถานะ:", "size": "xs", "weight": "bold", "color": "#888888"},
+                    {"type": "text", "text": "เปลี่ยนสถานะ (เฉพาะร้านนี้):", "size": "xs", "weight": "bold", "color": "#888888"},
                     *status_buttons,
                     {"type": "separator", "margin": "md"},
                     {
@@ -451,25 +451,31 @@ def flex_dates(dates):
         if not rows:
             continue
 
-        # สร้างปุ่มเปลี่ยนสถานะทั้งหมดในวันนั้น (Bulk Update Buttons)
-        bulk_buttons = []
-        for k, (emo, label) in STATUSES.items():
-            bulk_buttons.append({
+        # ปุ่มเปลี่ยนสถานะทั้งหมด (Bulk Update) เหลือเฉพาะ "Order แล้ว" และ "อัปสลิปแล้ว"
+        bulk_buttons = [
+            {
                 "type": "button",
                 "style": "secondary",
                 "height": "sm",
-                "action": {"type": "postback", "label": f"เปลี่ยนทุกอันเป็น {emo} {label}", "data": f"bulk_status|{d}|{k}"}
-            })
+                "action": {"type": "postback", "label": "✅ เปลี่ยนทุกร้านเป็น Order แล้ว", "data": f"bulk_status|{d}|ordered"}
+            },
+            {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "postback", "label": "👍 เปลี่ยนทุกร้านเป็น อัปสลิปแล้ว", "data": f"bulk_status|{d}|slip"}
+            }
+        ]
 
         body = [
-            {"type": "text", "text": f"🍺 Order {dmy(d)}", "weight": "bold", "wrap": True},
+            {"type": "text", "text": f"🍺 Order วันที่ {dmy(d)}", "weight": "bold", "size": "md", "wrap": True},
             {
                 "type": "box",
                 "layout": "vertical",
                 "spacing": "xs",
                 "margin": "sm",
                 "contents": [
-                    {"type": "text", "text": "⚡ เปลี่ยนสถานะทุกออเดอร์ในวันนี้:", "size": "xs", "color": "#888888", "weight": "bold"},
+                    {"type": "text", "text": "⚡ เมนูปรับสถานะพร้อมกันทุกร้านในวันนี้:", "size": "xs", "color": "#1D4ED8", "weight": "bold"},
                     *bulk_buttons
                 ]
             },
@@ -504,6 +510,7 @@ def flex_dates(dates):
                     ],
                 }
             )
+        body.append({"type": "separator", "margin": "md"})
         body.append({"type": "text", "text": f"📋 รวม {total_text(rows)}", "size": "sm", "wrap": True})
         body.append({"type": "text", "text": status_line(rows), "size": "xs", "color": "#555555"})
         bubbles.append(
@@ -649,16 +656,13 @@ def callback():
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
 
-                    # รองรับการเปลี่ยนสถานะทุกออเดอร์ในวันนั้นๆ พร้อมกัน (Bulk Update)
                     elif action == "bulk_status" and len(parts) > 2:
                         target_date, new_st = parts[1], parts[2]
                         if new_st in STATUSES:
-                            updated_count = 0
                             for o in DATA["orders"]:
                                 if o["ddate"] == target_date:
                                     o["status"] = new_st
                                     update("orders", o)
-                                    updated_count += 1
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
 
