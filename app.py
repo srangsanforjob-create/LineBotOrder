@@ -59,7 +59,13 @@ def _spreadsheet():
     global _ss
     if _ss is None:
         import gspread
-        gc = gspread.service_account_from_dict(json.loads(os.environ["GOOGLE_CREDENTIALS"]))
+        creds_raw = os.environ.get("GOOGLE_CREDENTIALS", "")
+        try:
+            creds_dict = json.loads(creds_raw)
+        except json.JSONDecodeError as e:
+            print(f"❌ ERROR: GOOGLE_CREDENTIALS รูปแบบ JSON ไม่ถูกต้อง: {e}")
+            raise
+        gc = gspread.service_account_from_dict(creds_dict)
         _ss = gc.open_by_key(os.environ["SHEET_ID"])
         have = {w.title for w in _ss.worksheets()}
         for tab, cols in COLS.items():
@@ -331,7 +337,6 @@ def callback():
                     dates = upcoming_dates()
                     flex_content = flex_dates(dates)
                 else:
-                    # ตัวอย่างรองรับข้อความอื่นๆ (ถ้ามี)
                     continue
                     
                 headers = {
@@ -342,13 +347,14 @@ def callback():
                     "replyToken": reply_token,
                     "messages": [flex_content] if isinstance(flex_content, dict) else [text(flex_content)]
                 }
-                requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
-    except Exception as e:
+                resp = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+                if resp.status_code != 200:
+                    print(f"❌ LINE Reply Error: {resp.status_code} {resp.text}")
+    except Exception:
         traceback.print_exc()
 
     return "OK"
 
 
 if __name__ == "__main__":
-    load()
     app.run(host="0.0.0.0", port=10000)
