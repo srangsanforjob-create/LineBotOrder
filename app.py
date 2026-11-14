@@ -6,7 +6,6 @@ import os
 import re
 import threading
 import traceback
-from calendar import monthrange
 from datetime import date, datetime
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
@@ -23,7 +22,7 @@ PRODUCT_CATEGORIES = {
     "Amenity": {"M": "MUG", "P": "PINE", "J": "JUG", "T": "TOWER"},
     "Support": {"SUPL": "Lager support", "SUPR": "Rose support", "SUPD": "Dunkel support"},
     "Equipment": {"H40L": "Hoshizaki 40L", "MCT": "Stainless Mobile Counter", "STB": "Stainless Table"},
-    "POSM": {"AST": "A-Stand", "STD": "Standee", "AA5": "อะคริลิก A5", "AA6": "อะคริลิก A6"}
+    "POSM": {"AST": "A-Stand", "STD": "Standee", "AA5": "อะคริลิก A5", "AA6": "อะคริลิก A6"},
 }
 
 PRODUCT_CODES = {}
@@ -45,6 +44,9 @@ ASK_MATCH = 0.60
 app = Flask(__name__)
 LOCK = threading.Lock()
 
+# เก็บตะกร้าชั่วคราวและสถานะการพิมพ์ของแต่ละ User
+USER_SESSIONS = {}
+
 COLS = {
     "shops": ["id", "name", "aliases"],
     "orders": ["id", "shop_id", "ddate", *CODES, "status", "by_user"],
@@ -59,15 +61,12 @@ def _spreadsheet():
     global _ss
     if _ss is None:
         import gspread
-        # เปลี่ยนชื่อไฟล์ตรงนี้ให้ตรงกับชื่อไฟล์ที่คุณตั้งใน Secret Files บน Render
         secret_path = "/etc/secrets/driven-current-323807-98d50517d033.json"
-        
         try:
             gc = gspread.service_account(filename=secret_path)
         except Exception as e:
             print(f"❌ ERROR: ไม่สามารถอ่านไฟล์ Secret Credentials ได้: {e}")
             raise
-            
         _ss = gc.open_by_key(os.environ["SHEET_ID"])
         have = {w.title for w in _ss.worksheets()}
         for tab, cols in COLS.items():
@@ -129,14 +128,6 @@ def update(tab, d):
     sheet_update(tab, d["_row"], [d.get(c, "") for c in COLS[tab]])
 
 
-def remove(tab, d):
-    sheet_delete(tab, d["_row"])
-    DATA[tab].remove(d)
-    for x in DATA[tab]:
-        if x["_row"] > d["_row"]:
-            x["_row"] -= 1
-
-
 def shop_by_id(sid):
     return next((s for s in DATA["shops"] if s["id"] == sid), None)
 
@@ -147,12 +138,6 @@ def order_by_id(oid):
         sh = shop_by_id(o["shop_id"])
         return dict(o, name=sh["name"] if sh else "?")
     return None
-
-
-def orders_between(d1, d2):
-    return sorted(
-        [o for o in DATA["orders"] if d1 <= o["ddate"] <= d2], key=lambda o: (o["ddate"], o["id"])
-    )
 
 
 def text(s):
@@ -229,31 +214,193 @@ def candidates(name):
 def get_or_create_shop(name):
     dn = display_name(name)
     s = next((s for s in DATA["shops"] if s["name"] == dn), None)
-    return s["id"] if s else add("shops", {"name": dn, "aliases": ""})["id"]
+    if s:
+        return s["id"]
+    cands = candidates(name)
+    if cands and cands[0][0] >= AUTO_MATCH:
+        return cands[0][1]["id"]
+    return add("shops", {"name": dn, "aliases": ""})["id"]
 
 
-def add_alias(shop_id, name):
-    s = shop_by_id(shop_id)
-    n = norm(name)
-    if s and n and n != norm(s["name"]) and n not in s["aliases"].split("|"):
-        s["aliases"] = (s["aliases"] + "|" + n).strip("|")
-        update("shops", s)
+def get_session(user_id):
+    if user_id not in USER_SESSIONS:
+        USER_SESSIONS[user_id] = {"items": {}, "step": None, "pending_code": None}
+    return USER_SESSIONS[user_id]
 
 
-def order_form_flex():
-    """สร้าง Flex Message สำหรับเปิดฟอร์มหรือคำแนะนำในการสั่งซื้อสินค้า"""
+def cart_summary(items):
+    if not items:
+        return "ยังไม่ได้เลือกสินค้า"
+    return "\n".join(f"• {PRODUCT_CODES.get(c, c)} ({c}) x {q}" for c, q in items.items() if q > 0)
+
+
+# ---------- FLEX MESSAGES ----------
+
+def flex_category_menu(user_id):
+    sess = get_session(user_id)
+    items = sess["items"]
+
+    cat_buttons = []
+    for cat in PRODUCT_CATEGORIES.keys():
+        cat_buttons.append({
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {"type": "postback", "label": f"📦 {cat}", "data": f"cat|{cat}"}
+        })
+
+    body_contents = [
+        {"type": "text", "text": "🛒 เลือกหมวดหมู่สินค้า", "weight": "bold", "size": "lg"},
+        {"type": "separator", "margin": "sm"},
+        {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "xs",
+            "margin": "sm",
+            "contents": [
+                {"type": "text", "text": "รายการที่เลือกไว้:", "size": "xs", "color": "#888888"},
+                {"type": "text", "text": cart_summary(items), "size": "sm", "wrap": True, "weight": "bold"}
+            ]
+        },
+        {"type": "separator", "margin": "md"},
+        {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": cat_buttons},
+    ]
+
+    footer_contents = []
+    if items:
+        footer_contents.append({
+            "type": "button",
+            "style": "primary",
+            "color": "#06C755",
+            "height": "sm",
+            "action": {"type": "postback", "label": "✅ ยืนยันรายการ / ใส่ชื่อร้าน", "data": "checkout"}
+        })
+        footer_contents.append({
+            "type": "button",
+            "style": "link",
+            "height": "sm",
+            "color": "#FF3B30",
+            "action": {"type": "postback", "label": "🗑️ ล้างรายการทั้งหมด", "data": "clear_cart"}
+        })
+
+    bubble = {
+        "type": "bubble",
+        "body": {"type": "box", "layout": "vertical", "contents": body_contents}
+    }
+    if footer_contents:
+        bubble["footer"] = {"type": "box", "layout": "vertical", "spacing": "xs", "contents": footer_contents}
+
+    return {"type": "flex", "altText": "ฟอร์มเลือกสั่งซื้อสินค้า", "contents": bubble}
+
+
+def flex_items_in_category(cat, user_id):
+    sess = get_session(user_id)
+    items = sess["items"]
+    cat_items = PRODUCT_CATEGORIES.get(cat, {})
+
+    rows = [
+        {"type": "text", "text": f"📦 หมวด: {cat}", "weight": "bold", "size": "lg"},
+        {"type": "text", "text": "กดปุ่มเพื่อเพิ่มหรือระบุจำนวนสินค้า", "size": "xs", "color": "#888888"},
+        {"type": "separator", "margin": "sm"},
+    ]
+
+    for code, name in cat_items.items():
+        qty = items.get(code, 0)
+        check = "☑️" if qty > 0 else "⬜"
+        qty_label = f" ({qty})" if qty > 0 else ""
+
+        rows.append({
+            "type": "box",
+            "layout": "horizontal",
+            "alignItems": "center",
+            "spacing": "sm",
+            "margin": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": f"{check} {name}{qty_label}",
+                    "size": "sm",
+                    "wrap": True,
+                    "flex": 5
+                },
+                {
+                    "type": "button",
+                    "style": "primary" if qty > 0 else "secondary",
+                    "height": "sm",
+                    "flex": 2,
+                    "action": {"type": "postback", "label": "+1", "data": f"add|{code}|1|{cat}"}
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "flex": 3,
+                    "action": {"type": "postback", "label": "ใส่จำนวน", "data": f"ask_qty|{code}|{cat}"}
+                }
+            ]
+        })
+
+    footer = {
+        "type": "box",
+        "layout": "horizontal",
+        "spacing": "sm",
+        "contents": [
+            {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "postback", "label": "⬅️ กลับหน้าหมวด", "data": "menu"}
+            },
+            {
+                "type": "button",
+                "style": "primary",
+                "color": "#06C755",
+                "height": "sm",
+                "action": {"type": "postback", "label": "✅ สรุป/สั่งซื้อ", "data": "checkout"}
+            }
+        ]
+    }
+
     return {
         "type": "flex",
-        "altText": "ฟอร์มสั่งซื้อสินค้า",
+        "altText": f"เลือกสินค้าหมวด {cat}",
+        "contents": {
+            "type": "bubble",
+            "size": "mega",
+            "body": {"type": "box", "layout": "vertical", "contents": rows},
+            "footer": footer
+        }
+    }
+
+
+def flex_status_picker(order_id):
+    o = order_by_id(order_id)
+    if not o:
+        return text("ไม่พบออเดอร์นี้")
+
+    btns = []
+    for k, (emo, label) in STATUSES.items():
+        btns.append({
+            "type": "button",
+            "style": "primary" if o["status"] == k else "secondary",
+            "height": "sm",
+            "action": {"type": "postback", "label": f"{emo} {label}", "data": f"set_status|{order_id}|{k}"}
+        })
+
+    return {
+        "type": "flex",
+        "altText": "เปลี่ยนสถานะออเดอร์",
         "contents": {
             "type": "bubble",
             "body": {
                 "type": "box",
                 "layout": "vertical",
-                "spacing": "md",
+                "spacing": "sm",
                 "contents": [
-                    {"type": "text", "text": "📝 ฟอร์มสั่งซื้อสินค้า", "weight": "bold", "size": "lg"},
-                    {"type": "text", "text": "กรุณาพิมพ์ชื่อร้านและรายการสินค้าที่ต้องการสั่ง เช่น:\n\n[ชื่อร้าน] [รหัสสินค้า][จำนวน]\nตัวอย่าง: ร้าน A L2 D1", "wrap": True, "size": "sm", "color": "#555555"}
+                    {"type": "text", "text": f"เปลี่ยนสถานะ #{order_id}", "weight": "bold", "size": "md"},
+                    {"type": "text", "text": f"{o['name']} ({dmy(o['ddate'])})", "size": "sm", "color": "#555555"},
+                    {"type": "separator"},
+                    *btns
                 ]
             }
         }
@@ -308,14 +455,56 @@ def flex_dates(dates):
             "contents": {"type": "carousel", "contents": bubbles}}
 
 
+def parse_shop_and_date(raw_text):
+    txt = raw_text.strip()
+    ddate = today()
+    m = re.search(r"(?:ส่ง\s*)?(\d{1,2})(?:/(\d{1,2}))?\s*$", txt)
+    if m:
+        day = int(m.group(1))
+        month = int(m.group(2)) if m.group(2) else None
+        resolved = resolve(day, month)
+        if resolved:
+            ddate = resolved
+            txt = txt[:m.start()].strip()
+    shop_name = txt if txt else "ไม่ระบุร้าน"
+    return shop_name, ddate.isoformat()
+
+
+def save_order_to_sheet(shop_name, ddate_iso, items_dict, user_id):
+    sid = get_or_create_shop(shop_name)
+    row_data = {
+        "shop_id": sid,
+        "ddate": ddate_iso,
+        "status": "ordered",
+        "by_user": user_id,
+    }
+    for c in CODES:
+        row_data[c] = items_dict.get(c, 0)
+    created = add("orders", row_data)
+    return order_by_id(created["id"])
+
+
+def reply_line(reply_token, messages):
+    if not isinstance(messages, list):
+        messages = [messages]
+    formatted = [m if isinstance(m, dict) else text(str(m)) for m in messages]
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TOKEN}"
+    }
+    payload = {"replyToken": reply_token, "messages": formatted}
+    resp = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+    if resp.status_code != 200:
+        print(f"❌ LINE Reply Error: {resp.status_code} {resp.text}")
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
 
-    # ตรวจสอบความถูกต้องของ Signature จาก LINE
-    hash = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
-    computed_signature = base64.b64encode(hash).decode("utf-8")
+    hash_val = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+    computed_signature = base64.b64encode(hash_val).decode("utf-8")
 
     if computed_signature != signature:
         abort(400)
@@ -323,35 +512,140 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
-            if event.get("type") == "message" and event.get("message", {}).get("type") == "text":
-                user_message = event["message"]["text"].strip()
-                reply_token = event.get("replyToken")
-                
-                # โหลดข้อมูลล่าสุดจาก Google Sheets
-                with LOCK:
-                    load()
-                    
-                # หากพิมพ์ "order" หรือ "สั่งซื้อ" ให้แสดงฟอร์มสั่งซื้อ
-                if user_message.lower() in ["order", "สั่งซื้อ", "สั่งของ"]:
-                    flex_content = order_form_flex()
-                # หากพิมพ์ "สรุป" หรือ "orders" ให้แสดงรายการสรุปออเดอร์
-                elif user_message.lower() in ["สรุป", "orders"]:
-                    dates = upcoming_dates()
-                    flex_content = flex_dates(dates)
-                else:
-                    continue
-                    
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {TOKEN}"
-                }
-                payload = {
-                    "replyToken": reply_token,
-                    "messages": [flex_content] if isinstance(flex_content, dict) else [text(flex_content)]
-                }
-                resp = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
-                if resp.status_code != 200:
-                    print(f"❌ LINE Reply Error: {resp.status_code} {resp.text}")
+            etype = event.get("type")
+            reply_token = event.get("replyToken")
+            user_id = event.get("source", {}).get("userId", "unknown")
+            sess = get_session(user_id)
+
+            with LOCK:
+                load()
+
+                if etype == "postback":
+                    data = event.get("postback", {}).get("data", "")
+                    parts = data.split("|")
+                    action = parts[0]
+
+                    if action == "menu":
+                        sess["step"] = None
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif action == "cat" and len(parts) > 1:
+                        cat = parts[1]
+                        sess["step"] = None
+                        reply_line(reply_token, flex_items_in_category(cat, user_id))
+
+                    elif action == "add" and len(parts) > 3:
+                        code, qty, cat = parts[1], int(parts[2]), parts[3]
+                        sess["items"][code] = sess["items"].get(code, 0) + qty
+                        reply_line(reply_token, flex_items_in_category(cat, user_id))
+
+                    elif action == "ask_qty" and len(parts) > 2:
+                        code, cat = parts[1], parts[2]
+                        sess["step"] = "await_qty"
+                        sess["pending_code"] = (code, cat)
+                        pname = PRODUCT_CODES.get(code, code)
+                        reply_line(reply_token, text(f"🔢 พิมพ์จำนวนของ {pname} ({code}) ได้เลยครับ (พิมพ์ 0 เพื่อลบออก):"))
+
+                    elif action == "clear_cart":
+                        sess["items"] = {}
+                        sess["step"] = None
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif action == "checkout":
+                        if not sess["items"]:
+                            reply_line(reply_token, text("ยังไม่ได้เลือกสินค้าเลยครับ กรุณากดเลือกสินค้าก่อน"))
+                        else:
+                            sess["step"] = "await_shop_date"
+                            summary = cart_summary(sess["items"])
+                            reply_line(
+                                reply_token,
+                                text(f"📋 รายการที่เลือก:\n{summary}\n\nกรุณาพิมพ์ **ชื่อร้าน และวันที่ส่ง**\nเช่น: สะออน ส่ง 15 (หรือ สะออน 15/11)")
+                            )
+
+                    elif action == "pick" and len(parts) > 1:
+                        oid = int(parts[1])
+                        reply_line(reply_token, flex_status_picker(oid))
+
+                    elif action == "set_status" and len(parts) > 2:
+                        oid, new_st = int(parts[1]), parts[2]
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o and new_st in STATUSES:
+                            o["status"] = new_st
+                            update("orders", o)
+                            emo, st_name = STATUSES[new_st]
+                            sh = shop_by_id(o["shop_id"])
+                            sname = sh["name"] if sh else "?"
+                            reply_line(reply_token, text(f"อัปเดตสถานะ #{oid} ({sname}) เป็น {emo} {st_name} เรียบร้อยแล้วครับ"))
+
+                elif etype == "message" and event.get("message", {}).get("type") == "text":
+                    user_message = event["message"]["text"].strip()
+                    low = user_message.lower()
+
+                    if low in ["order", "สั่งซื้อ", "สั่งของ"]:
+                        sess["step"] = None
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif low in ["สรุป", "orders"]:
+                        sess["step"] = None
+                        dates = upcoming_dates()
+                        reply_line(reply_token, flex_dates(dates))
+
+                    elif sess["step"] == "await_qty" and sess["pending_code"]:
+                        code, cat = sess["pending_code"]
+                        if user_message.isdigit():
+                            q = int(user_message)
+                            if q > 0:
+                                sess["items"][code] = q
+                            else:
+                                sess["items"].pop(code, None)
+                            sess["step"] = None
+                            sess["pending_code"] = None
+                            reply_line(reply_token, flex_items_in_category(cat, user_id))
+                        else:
+                            reply_line(reply_token, text("กรุณาพิมพ์เป็นตัวเลขครับ (เช่น 10 หรือ 0 เพื่อลบ)"))
+
+                    elif sess["step"] == "await_shop_date":
+                        shop_name, ddate_iso = parse_shop_and_date(user_message)
+                        saved = save_order_to_sheet(shop_name, ddate_iso, sess["items"], user_id)
+                        sess["items"] = {}
+                        sess["step"] = None
+                        reply_line(
+                            reply_token,
+                            text(
+                                f"✅ บันทึกออเดอร์เรียบร้อย!\n"
+                                f"ร้าน: {saved['name']}\n"
+                                f"วันที่ส่ง: {dmy(saved['ddate'])}\n"
+                                f"รายการ: {codes_text(saved)}\n"
+                                f"สถานะ: {STATUSES[saved['status']][0]} {STATUSES[saved['status']][1]}"
+                            )
+                        )
+
+                    else:
+                        tokens = user_message.split()
+                        found_items = {}
+                        remaining_tokens = []
+                        for tok in tokens:
+                            m = re.match(r"^([A-Za-z0-9]+?)(\d+)$", tok)
+                            if m and m.group(1).upper() in PRODUCT_CODES:
+                                c = m.group(1).upper()
+                                found_items[c] = found_items.get(c, 0) + int(m.group(2))
+                            else:
+                                remaining_tokens.append(tok)
+
+                        if found_items:
+                            shop_name, ddate_iso = parse_shop_and_date(" ".join(remaining_tokens))
+                            saved = save_order_to_sheet(shop_name, ddate_iso, found_items, user_id)
+                            reply_line(
+                                reply_token,
+                                text(
+                                    f"✅ บันทึกออเดอร์เรียบร้อย!\n"
+                                    f"ร้าน: {saved['name']}\n"
+                                    f"วันที่ส่ง: {dmy(saved['ddate'])}\n"
+                                    f"รายการ: {codes_text(saved)}\n"
+                                    f"สถานะ: {STATUSES[saved['status']][0]} {STATUSES[saved['status']][1]}"
+                                )
+                            )
+
     except Exception:
         traceback.print_exc()
 
