@@ -480,7 +480,6 @@ def flex_dates(dates):
             }
         ]
 
-        # ปุ่มลบข้อมูลออเดอร์ทั้งหมดในวันนั้น
         delete_day_button = {
             "type": "button",
             "style": "primary",
@@ -658,7 +657,10 @@ def callback():
                                 sess["edit_order_id"] = None
                                 sess["step"] = None
                                 dates = upcoming_dates()
-                                reply_line(reply_token, flex_dates(dates))
+                                if dates:
+                                    reply_line(reply_token, flex_dates(dates))
+                                else:
+                                    reply_line(reply_token, text("ลบออเดอร์ทั้งหมดเรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
                             else:
                                 sess["step"] = "await_shop_date"
                                 summary = cart_summary(sess["items"])
@@ -692,11 +694,17 @@ def callback():
 
                     elif action == "delete_day" and len(parts) > 1:
                         target_date = parts[1]
-                        to_delete = [o for o in DATA["orders"] if o["ddate"] == target_date]
-                        for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
-                            remove("orders", o)
-                        dates = upcoming_dates()
-                        reply_line(reply_token, flex_dates(dates))
+                        to_delete = [o for o in DATA["orders"] if str(o.get("ddate", "")).strip() == target_date]
+                        if to_delete:
+                            for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
+                                remove("orders", o)
+                            dates = upcoming_dates()
+                            if dates:
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                reply_line(reply_token, text(f"🗑️ ลบออเดอร์ของวันที่ {dmy(target_date)} ทั้งหมดเรียบร้อยแล้ว (ไม่มีออเดอร์คงเหลือ)"))
+                        else:
+                            reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {dmy(target_date)}"))
 
                     elif action == "delete" and len(parts) > 1:
                         oid = int(parts[1])
@@ -704,7 +712,10 @@ def callback():
                         if o:
                             remove("orders", o)
                             dates = upcoming_dates()
-                            reply_line(reply_token, flex_dates(dates))
+                            if dates:
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                reply_line(reply_token, text("ลบออเดอร์เรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
 
                     elif action == "edit" and len(parts) > 1:
                         oid = int(parts[1])
@@ -730,17 +741,19 @@ def callback():
                         dates = upcoming_dates()
                         reply_line(reply_token, flex_dates(dates))
 
-                    # รองรับคำสั่ง "ลบ dd/mm/yy" เช่น "ลบ 11/11/26"
                     elif low.startswith("ลบ"):
                         target_date_str = user_message[2:].strip()
                         parsed_iso = parse_date_input(target_date_str)
                         if parsed_iso:
-                            to_delete = [o for o in DATA["orders"] if o["ddate"] == parsed_iso]
+                            to_delete = [o for o in DATA["orders"] if str(o.get("ddate", "")).strip() == parsed_iso]
                             if to_delete:
                                 for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
                                     remove("orders", o)
                                 dates = upcoming_dates()
-                                reply_line(reply_token, flex_dates(dates))
+                                if dates:
+                                    reply_line(reply_token, flex_dates(dates))
+                                else:
+                                    reply_line(reply_token, text(f"🗑️ ลบออเดอร์วันที่ {target_date_str} ทั้งหมดเรียบร้อยแล้ว (ไม่มีออเดอร์คงเหลือ)"))
                             else:
                                 reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {target_date_str} ครับ"))
                         else:
@@ -757,7 +770,10 @@ def callback():
                                     to_remove = max(matched_orders, key=lambda x: x["id"])
                                     remove("orders", to_remove)
                                     dates = upcoming_dates()
-                                    reply_line(reply_token, flex_dates(dates))
+                                    if dates:
+                                        reply_line(reply_token, flex_dates(dates))
+                                    else:
+                                        reply_line(reply_token, text("ลบออเดอร์เรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
                                 else:
                                     reply_line(reply_token, text(f"ไม่พบออเดอร์ของร้าน {target_name} ครับ"))
                             else:
