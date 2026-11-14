@@ -176,8 +176,6 @@ def codes_text(o):
 
 
 def total_text(rows):
-    t = {c: sum(r.get(c, 0) for r in rows) for c in COES if c in CODES} # ป้องกัน error เพิ่มเติม
-    # ใช้ sum ปกติจาก CODES
     t = {c: sum(r.get(c, 0) for r in rows) for c in CODES}
     total_qty = sum(t.values())
     details = codes_text(t)
@@ -301,3 +299,31 @@ def compact(title, d1, d2):
         lines.append(f"รวม: {total_text(rs)}")
         lines.append("")
     return text("\n".join(lines).strip())
+
+
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+
+    # ตรวจสอบความถูกต้องของ Signature จาก LINE
+    hash = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+    computed_signature = base64.b64encode(hash).decode("utf-8")
+
+    if computed_signature != signature:
+        abort(400)
+
+    try:
+        events = json.loads(body).get("events", [])
+        for event in events:
+            # คุณสามารถเพิ่มโค้ดจัดการ Event ต่างๆ ของ LINE ได้ที่นี่
+            pass
+    except Exception as e:
+        traceback.print_exc()
+
+    return "OK"
+
+
+if __name__ == "__main__":
+    load()
+    app.run(host="0.0.0.0", port=10000)
