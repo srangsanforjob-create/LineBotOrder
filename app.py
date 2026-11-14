@@ -384,7 +384,6 @@ def flex_items_in_category(cat, user_id):
 
 
 def flex_order_actions(order_id):
-    """การ์ดจัดการออเดอร์: รวมปุ่มเปลี่ยนสถานะ, แก้ไข และลบออเดอร์ไว้ในที่เดียว"""
     o = order_by_id(order_id)
     if not o:
         return text("ไม่พบออเดอร์นี้")
@@ -451,7 +450,32 @@ def flex_dates(dates):
             [o for o in DATA["orders"] if o["ddate"] == d], key=lambda o: o["id"])]
         if not rows:
             continue
-        body = [{"type": "text", "text": f"🍺 Order {dmy(d)}", "weight": "bold", "wrap": True}]
+
+        # สร้างปุ่มเปลี่ยนสถานะทั้งหมดในวันนั้น (Bulk Update Buttons)
+        bulk_buttons = []
+        for k, (emo, label) in STATUSES.items():
+            bulk_buttons.append({
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "postback", "label": f"เปลี่ยนทุกอันเป็น {emo} {label}", "data": f"bulk_status|{d}|{k}"}
+            })
+
+        body = [
+            {"type": "text", "text": f"🍺 Order {dmy(d)}", "weight": "bold", "wrap": True},
+            {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "xs",
+                "margin": "sm",
+                "contents": [
+                    {"type": "text", "text": "⚡ เปลี่ยนสถานะทุกออเดอร์ในวันนี้:", "size": "xs", "color": "#888888", "weight": "bold"},
+                    *bulk_buttons
+                ]
+            },
+            {"type": "separator", "margin": "md"}
+        ]
+
         for i, r in enumerate(rows, 1):
             st = STATUSES.get(r["status"])
             emo = st[0] if st else ""
@@ -625,6 +649,19 @@ def callback():
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
 
+                    # รองรับการเปลี่ยนสถานะทุกออเดอร์ในวันนั้นๆ พร้อมกัน (Bulk Update)
+                    elif action == "bulk_status" and len(parts) > 2:
+                        target_date, new_st = parts[1], parts[2]
+                        if new_st in STATUSES:
+                            updated_count = 0
+                            for o in DATA["orders"]:
+                                if o["ddate"] == target_date:
+                                    o["status"] = new_st
+                                    update("orders", o)
+                                    updated_count += 1
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
                     elif action == "delete" and len(parts) > 1:
                         oid = int(parts[1])
                         o = next((x for x in DATA["orders"] if x["id"] == oid), None)
@@ -657,7 +694,6 @@ def callback():
                         dates = upcoming_dates()
                         reply_line(reply_token, flex_dates(dates))
 
-                    # รองรับคีย์เวิร์ด "ยกเลิก [ชื่อร้าน]" เช่น "ยกเลิก สะออน"
                     elif low.startswith("ยกเลิก"):
                         target_name = user_message[6:].strip()
                         if target_name:
@@ -666,7 +702,6 @@ def callback():
                                 shop_id = cands[0][1]["id"]
                                 matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
                                 if matched_orders:
-                                    # ลบออเดอร์ล่าสุดของร้านนั้น
                                     to_remove = max(matched_orders, key=lambda x: x["id"])
                                     remove("orders", to_remove)
                                     dates = upcoming_dates()
