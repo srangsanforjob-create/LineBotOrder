@@ -316,8 +316,28 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
-            # คุณสามารถเพิ่มโค้ดจัดการ Event ต่างๆ ของ LINE ได้ที่นี่
-            pass
+            if event.get("type") == "message" and event.get("message", {}).get("type") == "text":
+                user_message = event["message"]["text"].strip()
+                reply_token = event.get("replyToken")
+                
+                # โหลดข้อมูลล่าสุดจาก Google Sheets
+                with LOCK:
+                    load()
+                    
+                # ตัวอย่าง: พิมพ์ "สรุป" หรือ "order" เพื่อเรียกดูรายการออเดอร์
+                if user_message.lower() in ["สรุป", "order", "orders"]:
+                    dates = upcoming_dates()
+                    flex_content = flex_dates(dates)
+                    
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {TOKEN}"
+                    }
+                    payload = {
+                        "replyToken": reply_token,
+                        "messages": [flex_content] if isinstance(flex_content, dict) else [text(flex_content)]
+                    }
+                    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
     except Exception as e:
         traceback.print_exc()
 
