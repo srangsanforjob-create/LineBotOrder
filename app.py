@@ -170,6 +170,20 @@ def dmy(iso):
     return f"{int(d):02d}/{int(m):02d}/{y}"
 
 
+def parse_date_input(text_str):
+    """แปลงข้อความวันที่เช่น 11/11/26 หรือ 11/11/2026 เป็นรูปแบบ ISO YYYY-MM-DD"""
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", text_str)
+    if m:
+        d, mth, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if yr < 100:
+            yr += 2000
+        try:
+            return date(yr, mth, d).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
 def codes_text(o):
     return " ".join(f"{c}{o[c]}" for c in CODES if o.get(c, 0))
 
@@ -451,7 +465,6 @@ def flex_dates(dates):
         if not rows:
             continue
 
-        # ปุ่มเปลี่ยนสถานะทั้งหมด (Bulk Update) เหลือเฉพาะ "Order แล้ว" และ "อัปสลิปแล้ว"
         bulk_buttons = [
             {
                 "type": "button",
@@ -467,6 +480,15 @@ def flex_dates(dates):
             }
         ]
 
+        # ปุ่มลบข้อมูลออเดอร์ทั้งหมดในวันนั้น
+        delete_day_button = {
+            "type": "button",
+            "style": "primary",
+            "color": "#DC2626",
+            "height": "sm",
+            "action": {"type": "postback", "label": f"🗑️ ลบออเดอร์ทั้งวัน ({dmy(d)})", "data": f"delete_day|{d}"}
+        }
+
         body = [
             {"type": "text", "text": f"🍺 Order วันที่ {dmy(d)}", "weight": "bold", "size": "md", "wrap": True},
             {
@@ -475,8 +497,10 @@ def flex_dates(dates):
                 "spacing": "xs",
                 "margin": "sm",
                 "contents": [
-                    {"type": "text", "text": "⚡ เมนูปรับสถานะพร้อมกันทุกร้านในวันนี้:", "size": "xs", "color": "#1D4ED8", "weight": "bold"},
-                    *bulk_buttons
+                    {"type": "text", "text": "⚡ เมนูปรับสถานะพร้อมกันทุกร้าน:", "size": "xs", "color": "#1D4ED8", "weight": "bold"},
+                    *bulk_buttons,
+                    {"type": "separator", "margin": "xs"},
+                    delete_day_button
                 ]
             },
             {"type": "separator", "margin": "md"}
@@ -666,6 +690,14 @@ def callback():
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
 
+                    elif action == "delete_day" and len(parts) > 1:
+                        target_date = parts[1]
+                        to_delete = [o for o in DATA["orders"] if o["ddate"] == target_date]
+                        for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
+                            remove("orders", o)
+                        dates = upcoming_dates()
+                        reply_line(reply_token, flex_dates(dates))
+
                     elif action == "delete" and len(parts) > 1:
                         oid = int(parts[1])
                         o = next((x for x in DATA["orders"] if x["id"] == oid), None)
@@ -697,6 +729,22 @@ def callback():
                         sess["step"] = None
                         dates = upcoming_dates()
                         reply_line(reply_token, flex_dates(dates))
+
+                    # รองรับคำสั่ง "ลบ dd/mm/yy" เช่น "ลบ 11/11/26"
+                    elif low.startswith("ลบ"):
+                        target_date_str = user_message[2:].strip()
+                        parsed_iso = parse_date_input(target_date_str)
+                        if parsed_iso:
+                            to_delete = [o for o in DATA["orders"] if o["ddate"] == parsed_iso]
+                            if to_delete:
+                                for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
+                                    remove("orders", o)
+                                dates = upcoming_dates()
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {target_date_str} ครับ"))
+                        else:
+                            reply_line(reply_token, text("รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้รูปแบบ: ลบ 11/11/26"))
 
                     elif low.startswith("ยกเลิก"):
                         target_name = user_message[6:].strip()
