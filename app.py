@@ -32,6 +32,7 @@ for cat, items in PRODUCT_CATEGORIES.items():
 CODES = list(PRODUCT_CODES.keys())
 
 STATUSES = {
+    "pending": ("⏳", "ยังไม่ได้ Order"),
     "ordered": ("✅", "Order แล้ว"),
     "slip": ("👍", "อัปสลิปแล้ว"),
     "credit": ("💳", "Credit"),
@@ -171,7 +172,6 @@ def dmy(iso):
 
 
 def parse_date_input(text_str):
-    """แปลงข้อความวันที่เช่น 11/11/26 หรือ 11/11/2026 เป็นรูปแบบ ISO YYYY-MM-DD"""
     m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", text_str)
     if m:
         d, mth, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -566,7 +566,7 @@ def save_order_to_sheet(shop_name, ddate_iso, items_dict, user_id):
     row_data = {
         "shop_id": sid,
         "ddate": ddate_iso,
-        "status": "ordered",
+        "status": "pending",  # ค่าเริ่มต้นเป็น "ยังไม่ได้ Order"
         "by_user": user_id,
     }
     for c in CODES:
