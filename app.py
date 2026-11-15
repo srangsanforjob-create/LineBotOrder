@@ -172,13 +172,15 @@ def dmy(iso):
 
 
 def parse_date_input(text_str):
-    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", text_str)
+    m = re.search(r"(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{2,4}))?", text_str)
     if m:
-        d, mth, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        day = int(m.group(1))
+        month = int(m.group(2)) if m.group(2) else today().month
+        yr = int(m.group(3)) if m.group(3) else today().year
         if yr < 100:
             yr += 2000
         try:
-            return date(yr, mth, d).isoformat()
+            return date(yr, month, day).isoformat()
         except ValueError:
             return None
     return None
@@ -740,6 +742,18 @@ def callback():
                         dates = upcoming_dates()
                         reply_line(reply_token, flex_dates(dates))
 
+                    elif low.startswith("สรุป "):
+                        target_date_str = user_message[4:].strip()
+                        parsed_iso = parse_date_input(target_date_str)
+                        if parsed_iso:
+                            matched_dates = [parsed_iso] if any(o["ddate"] == parsed_iso for o in DATA["orders"]) else []
+                            if matched_dates:
+                                reply_line(reply_token, flex_dates(matched_dates))
+                            else:
+                                reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {target_date_str} ครับ"))
+                        else:
+                            reply_line(reply_token, text("รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้รูปแบบ: สรุป 15 หรือ สรุป 15/11"))
+
                     elif low.startswith("ลบ"):
                         target_date_str = user_message[2:].strip()
                         parsed_iso = parse_date_input(target_date_str)
@@ -762,7 +776,7 @@ def callback():
                         target_name = user_message[6:].strip()
                         if target_name:
                             cands = candidates(target_name)
-                            if cands and cands[0][0] >= ASK_MATCH:
+                            if cands and cands[0][0] >= AUTO_MATCH:
                                 shop_id = cands[0][1]["id"]
                                 matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
                                 if matched_orders:
