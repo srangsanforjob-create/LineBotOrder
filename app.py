@@ -216,7 +216,6 @@ def resolve(day, month=None):
 
 
 def upcoming_dates():
-    # ปรับให้ดึงทุกวันที่ในฐานข้อมูล (รวมถึงวันที่ผ่านมาแล้วด้วย เพื่อให้แก้ไขสเตตัสย้อนหลังได้) เรียงจากเก่าไปใหม่หรือใหม่ไปเก่าตามต้องการ
     return sorted({o["ddate"] for o in DATA["orders"] if o.get("ddate")}, reverse=False)
 
 
@@ -603,4 +602,229 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
-            etype = event.get("type
+            etype = event.get("type")
+            reply_token = event.get("replyToken")
+            user_id = event.get("source", {}).get("userId", "unknown")
+            sess = get_session(user_id)
+
+            with LOCK:
+                load()
+
+                if etype == "postback":
+                    data = event.get("postback", {}).get("data", "")
+                    parts = data.split("|")
+                    action = parts[0]
+
+                    if action == "menu":
+                        sess["step"] = None
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif action == "cat" and len(parts) > 1:
+                        cat = parts[1]
+                        sess["step"] = None
+                        reply_line(reply_token, flex_items_in_category(cat, user_id))
+
+                    elif action == "add" and len(parts) > 3:
+                        code, qty, cat = parts[1], int(parts[2]), parts[3]
+                        sess["items"][code] = sess["items"].get(code, 0) + qty
+                        reply_line(reply_token, flex_items_in_category(cat, user_id))
+
+                    elif action == "ask_qty" and len(parts) > 2:
+                        code, cat = parts[1], parts[2]
+                        sess["step"] = "await_qty"
+                        sess["pending_code"] = (code, cat)
+                        pname = PRODUCT_CODES.get(code, code)
+                        reply_line(reply_token, text(f"🔢 พิมพ์จำนวนของ {pname} ({code}) ได้เลยครับ (พิมพ์ 0 เพื่อลบออก):"))
+
+                    elif action == "clear_cart":
+                        sess["items"] = {}
+                        sess["step"] = None
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif action == "checkout":
+                        if not sess["items"]:
+                            reply_line(reply_token, text("ยังไม่ได้เลือกสินค้าเลยครับ กรุณากดเลือกสินค้าก่อน"))
+                        else:
+                            edit_id = sess.get("edit_order_id")
+                            if edit_id:
+                                o = next((x for x in DATA["orders"] if x["id"] == edit_id), None)
+                                if o:
+                                    for c in CODES:
+                                        o[c] = sess["items"].get(c, 0)
+                                    update("orders", o)
+                                sess["items"] = {}
+                                sess["edit_order_id"] = None
+                                sess["step"] = None
+                                dates = upcoming_dates()
+                                if dates:
+                                    reply_line(reply_token, flex_dates(dates))
+                                else:
+                                    reply_line(reply_token, text("ลบออเดอร์ทั้งหมดเรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
+                            else:
+                                sess["step"] = "await_shop_date"
+                                summary = cart_summary(sess["items"])
+                                reply_line(
+                                    reply_token,
+                                    text(f"📋 รายการที่เลือก:\n{summary}\n\nกรุณาพิมพ์ **ชื่อร้าน และวันที่ส่ง**\nเช่น: สะออน ส่ง 15 (หรือ สะออน 15/11)")
+                                )
+
+                    elif action == "pick" and len(parts) > 1:
+                        oid = int(parts[1])
+                        reply_line(reply_token, flex_order_actions(oid))
+
+                    elif action == "set_status" and len(parts) > 2:
+                        oid, new_st = int(parts[1]), parts[2]
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o and new_st in STATUSES:
+                            o["status"] = new_st
+                            update("orders", o)
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
+                    elif action == "bulk_status" and len(parts) > 2:
+                        target_date, new_st = parts[1], parts[2]
+                        if new_st in STATUSES:
+                            for o in DATA["orders"]:
+                                if o["ddate"] == target_date:
+                                    o["status"] = new_st
+                                    update("orders", o)
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
+                    elif action == "delete_day" and len(parts) > 1:
+                        target_date = parts[1]
+                        to_delete = [o for o in DATA["orders"] if str(o.get("ddate", "")).strip() == target_date]
+                        if to_delete:
+                            for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
+                                remove("orders", o)
+                            dates = upcoming_dates()
+                            if dates:
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                reply_line(reply_token, text(f"🗑️ ลบออเดอร์ของวันที่ {dmy(target_date)} ทั้งหมดเรียบร้อยแล้ว (ไม่มีออเดอร์คงเหลือ)"))
+                        else:
+                            reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {dmy(target_date)}"))
+
+                    elif action == "delete" and len(parts) > 1:
+                        oid = int(parts[1])
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o:
+                            remove("orders", o)
+                            dates = upcoming_dates()
+                            if dates:
+                                reply_line(reply_token, flex_dates(dates))
+                            else:
+                                reply_line(reply_token, text("ลบออเดอร์เรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
+
+                    elif action == "edit" and len(parts) > 1:
+                        oid = int(parts[1])
+                        o = next((x for x in DATA["orders"] if x["id"] == oid), None)
+                        if o:
+                            sess["edit_order_id"] = oid
+                            sess["items"] = {c: o[c] for c in CODES if o.get(c, 0) > 0}
+                            sess["step"] = None
+                            reply_line(reply_token, flex_category_menu(user_id))
+
+                elif etype == "message" and event.get("message", {}).get("type") == "text":
+                    user_message = event["message"]["text"].strip()
+                    low = user_message.lower()
+
+                    if low in ["order", "สั่งซื้อ", "สั่งของ"]:
+                        sess["step"] = None
+                        sess["edit_order_id"] = None
+                        sess["items"] = {}
+                        reply_line(reply_token, flex_category_menu(user_id))
+
+                    elif low in ["สรุป", "orders"]:
+                        sess["step"] = None
+                        dates = upcoming_dates()
+                        reply_line(reply_token, flex_dates(dates))
+
+                    elif low.startswith("ลบ"):
+                        target_date_str = user_message[2:].strip()
+                        parsed_iso = parse_date_input(target_date_str)
+                        if parsed_iso:
+                            to_delete = [o for o in DATA["orders"] if str(o.get("ddate", "")).strip() == parsed_iso]
+                            if to_delete:
+                                for o in sorted(to_delete, key=lambda x: x["_row"], reverse=True):
+                                    remove("orders", o)
+                                dates = upcoming_dates()
+                                if dates:
+                                    reply_line(reply_token, flex_dates(dates))
+                                else:
+                                    reply_line(reply_token, text(f"🗑️ ลบออเดอร์วันที่ {target_date_str} ทั้งหมดเรียบร้อยแล้ว (ไม่มีออเดอร์คงเหลือ)"))
+                            else:
+                                reply_line(reply_token, text(f"ไม่พบออเดอร์ในวันที่ {target_date_str} ครับ"))
+                        else:
+                            reply_line(reply_token, text("รูปแบบวันที่ไม่ถูกต้อง กรุณาใช้รูปแบบ: ลบ 11/11/26"))
+
+                    elif low.startswith("ยกเลิก"):
+                        target_name = user_message[6:].strip()
+                        if target_name:
+                            cands = candidates(target_name)
+                            if cands and cands[0][0] >= ASK_MATCH:
+                                shop_id = cands[0][1]["id"]
+                                matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
+                                if matched_orders:
+                                    to_remove = max(matched_orders, key=lambda x: x["id"])
+                                    remove("orders", to_remove)
+                                    dates = upcoming_dates()
+                                    if dates:
+                                        reply_line(reply_token, flex_dates(dates))
+                                    else:
+                                        reply_line(reply_token, text("ลบออเดอร์เรียบร้อยแล้ว ไม่มีออเดอร์คงเหลือครับ"))
+                                else:
+                                    reply_line(reply_token, text(f"ไม่พบออเดอร์ของร้าน {target_name} ครับ"))
+                            else:
+                                reply_line(reply_token, text(f"ไม่พบชื่อร้าน {target_name} ในระบบครับ"))
+                        else:
+                            reply_line(reply_token, text("กรุณาระบุชื่อร้านที่ต้องการยกเลิก เช่น: ยกเลิก สะออน"))
+
+                    elif sess["step"] == "await_qty" and sess["pending_code"]:
+                        code, cat = sess["pending_code"]
+                        if user_message.isdigit():
+                            q = int(user_message)
+                            if q > 0:
+                                sess["items"][code] = q
+                            else:
+                                sess["items"].pop(code, None)
+                            sess["step"] = None
+                            sess["pending_code"] = None
+                            reply_line(reply_token, flex_items_in_category(cat, user_id))
+                        else:
+                            reply_line(reply_token, text("กรุณาพิมพ์เป็นตัวเลขครับ (เช่น 10 หรือ 0 เพื่อลบ)"))
+
+                    elif sess["step"] == "await_shop_date":
+                        shop_name, ddate_iso = parse_shop_and_date(user_message)
+                        save_order_to_sheet(shop_name, ddate_iso, sess["items"], user_id)
+                        sess["items"] = {}
+                        sess["step"] = None
+                        dates = upcoming_dates()
+                        reply_line(reply_token, flex_dates(dates))
+
+                    else:
+                        tokens = user_message.split()
+                        found_items = {}
+                        remaining_tokens = []
+                        for tok in tokens:
+                            m = re.match(r"^([A-Za-z0-9]+?)(\d+)$", tok)
+                            if m and m.group(1).upper() in PRODUCT_CODES:
+                                c = m.group(1).upper()
+                                found_items[c] = found_items.get(c, 0) + int(m.group(2))
+                            else:
+                                remaining_tokens.append(tok)
+
+                        if found_items:
+                            shop_name, ddate_iso = parse_shop_and_date(" ".join(remaining_tokens))
+                            save_order_to_sheet(shop_name, ddate_iso, found_items, user_id)
+                            dates = upcoming_dates()
+                            reply_line(reply_token, flex_dates(dates))
+
+    except Exception:
+        traceback.print_exc()
+
+    return "OK"
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
