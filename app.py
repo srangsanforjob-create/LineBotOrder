@@ -776,7 +776,7 @@ def callback():
                         target_name = user_message[6:].strip()
                         if target_name:
                             cands = candidates(target_name)
-                            if cands and cands[0][0] >= AUTO_MATCH:
+                            if cands and cands[0][0] >= ASK_MATCH:
                                 shop_id = cands[0][1]["id"]
                                 matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
                                 if matched_orders:
@@ -817,22 +817,34 @@ def callback():
                         reply_line(reply_token, flex_dates(dates))
 
                     else:
-                        tokens = user_message.split()
+                        # ---------------------------------------------------------
+                        # ปรับปรุงระบบแกะข้อความ: รองรับทั้งแบบเว้นวรรค และตัวติดกัน
+                        # เช่น "L2R1สะออน15" หรือ "L2 R1 สะออน 15"
+                        # ---------------------------------------------------------
                         found_items = {}
-                        remaining_tokens = []
-                        for tok in tokens:
-                            m = re.match(r"^([A-Za-z0-9]+?)(\d+)$", tok)
-                            if m and m.group(1).upper() in PRODUCT_CODES:
-                                c = m.group(1).upper()
-                                found_items[c] = found_items.get(c, 0) + int(m.group(2))
-                            else:
-                                remaining_tokens.append(tok)
+                        
+                        # ค้นหาแพทเทิร์นรหัสสินค้าตามด้วยตัวเลข (เช่น L2, R1, TOWER หรือ T1) จากข้อความทั้งหมด
+                        # โดยใช้ Regular Expression กวาดหาตัวอักษรสินค้าและตัวเลขที่ติดกัน
+                        pattern = r"([A-Za-z]+)(\d+)"
+                        matches = list(re.finditer(pattern, user_message))
+                        
+                        remaining_text = user_message
+                        if matches:
+                            for m in matches:
+                                code_str = m.group(1).upper()
+                                qty_str = m.group(2)
+                                if code_str in PRODUCT_CODES:
+                                    found_items[code_str] = found_items.get(code_str, 0) + int(qty_str)
+                            # ตัดส่วนที่เป็นสินค้าออก เพื่อให้เหลือแค่ชื่อร้านและวันที่
+                            remaining_text = re.sub(pattern, "", user_message)
 
                         if found_items:
-                            shop_name, ddate_iso = parse_shop_and_date(" ".join(remaining_tokens))
+                            shop_name, ddate_iso = parse_shop_and_date(remaining_text)
                             save_order_to_sheet(shop_name, ddate_iso, found_items, user_id)
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
+                        else:
+                            reply_line(reply_token, text("ไม่พบรายการสินค้าที่ถูกต้อง ลองพิมพ์ใหม่อีกครั้ง เช่น L2R1 สะออน 15"))
 
     except Exception:
         traceback.print_exc()
