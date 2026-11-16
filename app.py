@@ -23,6 +23,47 @@ PRODUCT_CATEGORIES = {
     "Support": {"SUPL": "Lager support", "SUPR": "Rose support", "SUPD": "Dunkel support"},
     "Equipment": {"H40L": "Hoshizaki 40L", "MCT": "Stainless Mobile Counter", "STB": "Stainless Table"},
     "POSM": {"AST": "A-Stand", "STD": "Standee", "AA5": "อะคริลิก A5", "AA6": "อะคริลิก A6"},
+    "OtherALC": {
+        "GALF": "Galaxy แบน 350ml",
+        "GALR": "Galaxy กลม 700ml",
+        "TEND3": "Tendo 360ml",
+        "TEND7": "Tendo 700ml",
+        "KACH": "Kacha 375ml",
+        "SOJY": "Soju โยเกิร์ต",
+        "SOJP": "Soju พีช",
+        "SOJG": "Soju องุ่น",
+        "SOJF": "Soju เกรปฟรุ๊ต",
+        "SOJS": "Soju สตรอเบอรี่"
+    },
+    "SupportAll": {
+        "supL": "sup Lager",
+        "supR": "sup Rose",
+        "supD": "sup Dunkel",
+        "supM": "sup MUG",
+        "supP": "sup PINE",
+        "supJ": "sup JUG",
+        "supT": "sup TOWER",
+        "supSUPL": "sup Lager support",
+        "supSUPR": "sup Rose support",
+        "supSUPD": "sup Dunkel support",
+        "supH40L": "sup Hoshizaki 40L",
+        "supMCT": "sup Stainless Mobile Counter",
+        "supSTB": "sup Stainless Table",
+        "supAST": "sup A-Stand",
+        "supSTD": "sup Standee",
+        "supAA5": "sup อะคริลิก A5",
+        "supAA6": "sup อะคริลิก A6",
+        "supGALF": "sup Galaxy แบน 350ml",
+        "supGALR": "sup Galaxy กลม 700ml",
+        "supTEND3": "sup Tendo 360ml",
+        "supTEND7": "sup Tendo 700ml",
+        "supKACH": "sup Kacha 375ml",
+        "supSOJY": "sup Soju โยเกิร์ต",
+        "supSOJP": "sup Soju พีช",
+        "supSOJG": "sup Soju องุ่น",
+        "supSOJF": "sup Soju เกรปฟรุ๊ต",
+        "supSOJS": "sup Soju สตรอเบอรี่"
+    }
 }
 
 PRODUCT_CODES = {}
@@ -776,7 +817,7 @@ def callback():
                         target_name = user_message[6:].strip()
                         if target_name:
                             cands = candidates(target_name)
-                            if cands and cands[0][0] >= ASK_MATCH:
+                            if cands and cands[0][0] >= AUTO_MATCH:
                                 shop_id = cands[0][1]["id"]
                                 matched_orders = [o for o in DATA["orders"] if o["shop_id"] == shop_id]
                                 if matched_orders:
@@ -817,26 +858,34 @@ def callback():
                         reply_line(reply_token, flex_dates(dates))
 
                     else:
-                        # ---------------------------------------------------------
-                        # ปรับปรุงระบบแกะข้อความ: รองรับทั้งแบบเว้นวรรค และตัวติดกัน
-                        # เช่น "L2R1สะออน15" หรือ "L2 R1 สะออน 15"
-                        # ---------------------------------------------------------
+                        cleaned_message = re.sub(r'\bย\b', '', user_message)
                         found_items = {}
                         
-                        # ค้นหาแพทเทิร์นรหัสสินค้าตามด้วยตัวเลข (เช่น L2, R1, TOWER หรือ T1) จากข้อความทั้งหมด
-                        # โดยใช้ Regular Expression กวาดหาตัวอักษรสินค้าและตัวเลขที่ติดกัน
+                        # ใช้ Regex รองรับตัวรหัสสินค้าที่มีคำว่า sup นำหน้า หรือรหัสปกติ
                         pattern = r"([A-Za-z]+)(\d+)"
-                        matches = list(re.finditer(pattern, user_message))
+                        matches = list(re.finditer(pattern, cleaned_message))
                         
-                        remaining_text = user_message
+                        remaining_text = cleaned_message
                         if matches:
                             for m in matches:
-                                code_str = m.group(1).upper()
-                                qty_str = m.group(2)
+                                code_str = m.group(1)
+                                # ตรวจสอบทั้งตัวพิมพ์ใหญ่/เล็ก หรือแบบมี sup นำหน้า
+                                upper_code = code_str.upper()
+                                lower_code = code_str.lower()
+                                
+                                target_code = None
                                 if code_str in PRODUCT_CODES:
-                                    found_items[code_str] = found_items.get(code_str, 0) + int(qty_str)
-                            # ตัดส่วนที่เป็นสินค้าออก เพื่อให้เหลือแค่ชื่อร้านและวันที่
-                            remaining_text = re.sub(pattern, "", user_message)
+                                    target_code = code_str
+                                elif upper_code in PRODUCT_CODES:
+                                    target_code = upper_code
+                                elif lower_code in PRODUCT_CODES:
+                                    target_code = lower_code
+                                
+                                if target_code:
+                                    qty_str = m.group(2)
+                                    found_items[target_code] = found_items.get(target_code, 0) + int(qty_str)
+                                    
+                            remaining_text = re.sub(pattern, "", cleaned_message)
 
                         if found_items:
                             shop_name, ddate_iso = parse_shop_and_date(remaining_text)
@@ -844,7 +893,8 @@ def callback():
                             dates = upcoming_dates()
                             reply_line(reply_token, flex_dates(dates))
                         else:
-                            reply_line(reply_token, text("ไม่พบรายการสินค้าที่ถูกต้อง ลองพิมพ์ใหม่อีกครั้ง เช่น L2R1 สะออน 15"))
+                        
+                            reply_line(reply_token, text("ไม่พบรายการสินค้าที่ถูกต้อง ลองพิมพ์ใหม่อีกครั้ง เช่น supl2 supGALF1 สะออน 15"))
 
     except Exception:
         traceback.print_exc()
