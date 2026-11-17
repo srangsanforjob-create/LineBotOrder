@@ -218,7 +218,6 @@ def build_carousel(chat_id):
 
     shop_map = {str(s["id"]): s for s in shops}
     
-    # จัดกลุ่มออเดอร์ตามวันที่ ddate อย่างเคร่งครัด
     grouped_by_date = {}
     for order in orders:
         ddate = order.get("ddate", get_bangkok_date_str())
@@ -234,7 +233,6 @@ def build_carousel(chat_id):
         
         content_blocks = [
             {"type": "text", "text": formatted_date, "weight": "bold", "size": "md", "color": "#111111"},
-            # ปุ่มควบคุมสถานะภาพรวมทั้งวัน
             {
                 "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "md",
                 "contents": [
