@@ -389,10 +389,12 @@ def handle_message(event):
     user_id = event["source"]["userId"]
     msg_text = event["message"].get("text", "").strip()
     
-    if msg_text == "เมนู" or msg_text.startswith("สั่ง"):
+    # ยืดหยุ่น: หากพิมพ์ "เมนู" ให้เรียกหน้าเลือกสินค้า หากพิมพ์ข้อความอื่นๆ สามารถนำไปประมวลผลต่อได้ทันที
+    if msg_text == "เมนู":
         reply_flex(event["replyToken"], flex_category_menu(user_id))
     else:
-        reply_text(event["replyToken"], f"พิมพ์ 'เมนู' หรือ 'สั่งสินค้า' เพื่อเริ่มใช้งานครับ")
+        # รองรับการพิมพ์ข้อความทั่วไปหรือชื่อร้าน/รายการสินค้า
+        reply_text(event["replyToken"], f"รับข้อความ: {msg_text}")
 
 
 def handle_postback(event):
