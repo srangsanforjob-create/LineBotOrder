@@ -111,7 +111,6 @@ def get_bangkok_date_str():
     return datetime.now(TZ).strftime("%Y-%m-%d")
 
 def resolve_date_token(token):
-    """แปลงเลขวันที่นำหน้า (เช่น 19 หรือ 19/11) ให้เป็น YYYY-MM-DD"""
     now_bkk = datetime.now(TZ)
     m_full = re.match(r"^(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?$", token)
     if m_full:
@@ -176,7 +175,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # 1. ตรวจสอบสถานะท้ายบรรทัด
         status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
@@ -186,7 +184,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # 2. แยกวันที่หน้าสุดออกจากชื่อร้านอย่างเด็ดขาด
         order_date = get_bangkok_date_str()
         if tokens[0] in ["วันที่", "วัน"] and len(tokens) > 1:
             parsed_dt = resolve_date_token(tokens[1])
@@ -202,7 +199,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # 3. หาตำแหน่งเริ่มต้นของรายการสินค้า
         first_item_idx = -1
         for i, token in enumerate(tokens):
             clean_tok = token.lower().strip()
@@ -275,7 +271,6 @@ def build_carousel(chat_id):
 
     shop_map = {str(s["id"]): s for s in shops}
 
-    # จัดกลุ่มตาม ddate อย่างเคร่งครัด (1 การ์ด = 1 วัน)
     grouped_by_date = {}
     for order in orders:
         ddate = str(order.get("ddate") or get_bangkok_date_str())
@@ -292,7 +287,6 @@ def build_carousel(chat_id):
 
         content_blocks = [
             {"type": "text", "text": formatted_date, "weight": "bold", "size": "md", "color": "#111111"},
-            # ปุ่มจัดการภาพรวมทั้งวัน
             {
                 "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "md",
                 "contents": [
@@ -328,7 +322,6 @@ def build_carousel(chat_id):
             if not item_rows:
                 item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
 
-            # ปุ่มเปลี่ยนสถานะของแต่ละร้าน/ออเดอร์ (ครบทุกสถานะ)
             order_buttons_row1 = {
                 "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "sm",
                 "contents": [
@@ -417,7 +410,6 @@ def callback():
 
             reply_token = event.get("replyToken", "")
 
-            # --- HANDLE POSTBACK BUTTONS ---
             if event.get("type") == "postback":
                 data_str = event.get("postback", {}).get("data", "")
                 query_params = dict(qp.split("=", 1) for qp in data_str.split("&") if "=" in qp)
@@ -450,7 +442,6 @@ def callback():
                         send_reply(reply_token, [build_carousel(chat_id)])
                 continue
 
-            # --- HANDLE TEXT MESSAGES ---
             if event.get("type") == "message" and event["message"].get("type") == "text":
                 text = event["message"]["text"].strip()
 
@@ -467,13 +458,11 @@ def callback():
 
                 parsed_list, errors = parse_order_text(text)
 
-                # ถ้าไม่มีรายการออเดอร์ที่ถูกต้องเลย (เช่น พิมพ์ผิด หรือคุยเล่นทั่วไป) -> ไม่ส่งสรุปยอด
                 if not parsed_list:
                     if errors and any(k in text.lower() for k in ALIAS_MAP.keys()):
                         send_reply(reply_token, [{"type": "text", "text": "⚠️ รูปแบบไม่ถูกต้อง:\n" + "\n".join(errors)}])
                     continue
 
-                # บันทึกออเดอร์ใหม่ลงฐานข้อมูล
                 inserted_count = 0
                 for entry in parsed_list:
                     shop = get_or_create_shop(entry["shop_name"])
@@ -490,7 +479,6 @@ def callback():
                         supabase.table("orders").insert(payload).execute()
                         inserted_count += 1
 
-                # ส่งสรุปยอดต่อเมื่อมีออเดอร์ใหม่บันทึกสำเร็จเท่านั้น
                 if inserted_count > 0:
                     msg_objs = []
                     if errors:
