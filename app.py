@@ -67,6 +67,7 @@ STATUSES = {
     "slip": ("👍", "อัปสลิปแล้ว", "#00B900"),
     "credit": ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"),
     "overdue": ("🚨", "เลยกำหนดชำระ / Overdue", "#FF334B"),
+    "insufficient_credit": ("⚠️", "วงเงินไม่พอ / วงเงินเต็ม", "#FF334B")
 }
 
 def num(v):
@@ -161,6 +162,7 @@ def build_summary_carousel():
             for idx, o in enumerate(date_orders):
                 sh = shop_by_id(o["shop_id"], shops)
                 shop_name = sh["name"] if sh else "ร้านค้า"
+                order_id = o.get("id")
                 status_key = o.get("status", "credit")
                 icon, label, color = STATUSES.get(status_key, ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"))
 
@@ -183,20 +185,136 @@ def build_summary_carousel():
                 if idx > 0:
                     shop_contents.append({"type": "separator", "margin": "lg"})
 
+                # รายละเอียดแต่ละร้าน พร้อมปุ่มเปลี่ยนสเตตัสรายร้าน
                 shop_contents.extend([
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
-                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows},
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "sm",
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {
+                                    "type": "postback",
+                                    "label": "Order ✅",
+                                    "data": f"action=status&id={order_id}&status=ordered"
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {
+                                    "type": "postback",
+                                    "label": "สลิป 👍",
+                                    "data": f"action=status&id={order_id}&status=slip"
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {
+                                    "type": "postback",
+                                    "label": "เครดิต 💳",
+                                    "data": f"action=status&id={order_id}&status=credit"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {
+                                    "type": "postback",
+                                    "label": "Overdue 🚨",
+                                    "data": f"action=status&id={order_id}&status=overdue"
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {
+                                    "type": "postback",
+                                    "label": "วงเงินเต็ม ⚠️",
+                                    "data": f"action=status&id={order_id}&status=insufficient_credit"
+                                }
+                            }
+                        ]
+                    }
                 ])
 
+            # ส่วนหัวของการ์ดแต่ละวัน เพิ่มปุ่มจัดการทั้งหมด (Bulk Actions)
             bubbles.append({
                 "type": "bubble",
                 "size": "kilo",
                 "header": {
                     "type": "box",
                     "layout": "vertical",
+                    "spacing": "sm",
                     "contents": [
-                        {"type": "text", "text": f"📅 สรุปยอดวันที่ {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#ffffff"}
+                        {"type": "text", "text": f"📅 สรุปยอดวันที่ {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#ffffff"},
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "sm",
+                            "contents": [
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "height": "sm",
+                                    "color": "#1DB446",
+                                    "action": {
+                                        "type": "postback",
+                                        "label": "Order ทั้งหมด ✅",
+                                        "data": f"action=bulk_status&date={date_str}&status=ordered"
+                                    }
+                                },
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "height": "sm",
+                                    "color": "#00B900",
+                                    "action": {
+                                        "type": "postback",
+                                        "label": "สลิปทั้งหมด 👍",
+                                        "data": f"action=bulk_status&date={date_str}&status=slip"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "sm",
+                            "contents": [
+                                {
+                                    "type": "button",
+                                    "style": "primary",
+                                    "height": "sm",
+                                    "color": "#FF334B",
+                                    "action": {
+                                        "type": "postback",
+                                        "label": "ยกเลิกทั้งหมด ❌",
+                                        "data": f"action=bulk_cancel&date={date_str}"
+                                    }
+                                }
+                            ]
+                        }
                     ],
                     "backgroundColor": "#06C755"
                 },
@@ -233,10 +351,45 @@ def callback():
         for event in events:
             if event.get("type") == "message":
                 handle_message(event)
+            elif event.get("type") == "postback":
+                handle_postback(event)
     except Exception as e:
         print(f"❌ Callback Error: {e}")
 
     return "OK", 200
+
+def handle_postback(event):
+    reply_token = event["replyToken"]
+    data = event.get("postback", {}).get("data", "")
+    
+    params = dict(item.split("=") for item in data.split("&") if "=" in item)
+    action = params.get("action")
+    
+    try:
+        if action == "status":
+            order_id = params.get("id")
+            new_status = params.get("status")
+            supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
+            print(f"✅ Order {order_id} status updated to {new_status}")
+            
+        elif action == "bulk_status":
+            target_date = params.get("date")
+            new_status = params.get("status")
+            supabase.table("orders").update({"status": new_status}).eq("ddate", target_date).execute()
+            print(f"✅ All orders on {target_date} updated to {new_status}")
+            
+        elif action == "bulk_cancel":
+            target_date = params.get("date")
+            supabase.table("orders").delete().eq("ddate", target_date).execute()
+            print(f"✅ All orders on {target_date} deleted/cancelled")
+            
+    except Exception as e:
+        print(f"❌ Postback Action Error: {e}")
+        send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการจัดการระบบ: {e}"})
+        return
+
+    res_obj = build_summary_carousel()
+    send_reply(reply_token, res_obj)
 
 def handle_message(event):
     msg = event["message"]
