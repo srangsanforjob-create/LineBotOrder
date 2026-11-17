@@ -1,5 +1,6 @@
-flask
-requests
 gunicorn
 tzdata
-gspread>=6
+flask
+requests
+supabase
+
