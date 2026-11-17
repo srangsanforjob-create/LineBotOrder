@@ -768,7 +768,7 @@ def get_all_valid_days_data():
     _, orders, _ = fetch_fresh_data()
     all_dates = set(o.get("ddate") for o in orders if o.get("ddate"))
     sorted_dates = sorted(list(all_dates))
-    return {sd: [o for o in orders if o.get("ddate"] == sd] for sd in sorted_dates} # type: ignore
+    return {sd: [o for o in orders if o.get("ddate") == sd] for sd in sorted_dates}
 
 
 def get_specific_day_data(date_str):
