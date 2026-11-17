@@ -70,7 +70,7 @@ ALIAS_MAP = {
     "glxเล็ก": "galf", "glaxเล็ก": "galf",
     "กาแล็กซีแบน": "galf", "กาแล็กซี่แบน": "galf", "กาแลaxyแบน": "galf", "galf": "galf",
     # Galaxy กลม (700ml)
-    "galaxyกลม": "galr", "galaxy700": "galf" if False else "galr", "galaxy700ml": "galr", "galaxyใหญ่": "galr",
+    "galaxyกลม": "galr", "galaxy700": "galr", "galaxy700ml": "galr", "galaxyใหญ่": "galr",
     "glxกลม": "galr", "glaxกลม": "galr", "glx700": "galr", "glax700": "galr",
     "glxใหญ่": "galr", "glaxใหญ่": "galr",
     "กาแล็กซีกลม": "galr", "กาแล็กซี่กลม": "galr", "กาแลaxyกลม": "galr", "galr": "galr",
@@ -105,7 +105,6 @@ STATUSES = {
 }
 
 app = Flask(__name__)
-LOCK = threading.Lock()
 DATA = {"shops": [], "orders": [], "pending": []}
 LOADED = False
 
@@ -219,9 +218,6 @@ def get_or_create_shop(name):
 
 
 def normalize_tokens(raw_tokens):
-    """
-    รวม token ที่แยกกันเช่น ['galaxy', 'แบน', '4'] หรือ ['glx', '5'] ให้เป็นก้อนเดียวกันก่อนแยกชื่อกับจำนวน
-    """
     merged = []
     i = 0
     size_words = {"แบน", "กลม", "เล็ก", "ใหญ่", "350", "350ml", "700", "700ml", "360", "360ml",
@@ -233,7 +229,6 @@ def normalize_tokens(raw_tokens):
             i += 1
             continue
 
-        # รวมคำขยายขนาด/รสชาติที่ตามหลังชื่อสินค้า เช่น "galaxy" + "แบน"
         while i + 1 < len(raw_tokens):
             nxt = raw_tokens[i + 1].strip()
             nxt_no_num = re.sub(r"\d+$", "", nxt).lower()
@@ -243,7 +238,6 @@ def normalize_tokens(raw_tokens):
             else:
                 break
 
-        # รวมตัวเลขที่อยู่ถัดไป เช่น "galaxyแบน" + "4" หรือ "glx" + "5"
         if (
             i + 1 < len(raw_tokens)
             and re.fullmatch(r"\d+", raw_tokens[i + 1].strip())
@@ -259,16 +253,11 @@ def normalize_tokens(raw_tokens):
 
 
 def match_product_token(token):
-    """
-    แยกชื่อสินค้ากับตัวเลขจำนวนออกจากกันก่อนเสมอ เพื่อให้จำนวนถูกต้อง 100%
-    """
     clean_token = re.sub(r"\s+", "", token.lower().strip())
 
-    # 1. เช็ค Alias แบบตรงตัวก่อน (เผื่อกรณีที่มีตัวเลขเป็นส่วนหนึ่งของชื่อ เช่น h40, tend3, galaxy350)
     if clean_token in ALIAS_MAP:
         return ("exact", ALIAS_MAP[clean_token], 1, token)
 
-    # 2. แยกชื่อสินค้าด้านหน้า และจำนวนตัวเลขด้านหลัง (เช่น glxกลม4 -> name='glxกลม', qty=4)
     m = re.match(r"^([a-zเ-์\-]+?(?:350ml|700ml|360ml|350|700|360|40l|90l|120l|40|90|120|a5|a6)?)(\d*)$", clean_token)
     if m and m.group(1):
         name_part = m.group(1)
@@ -286,15 +275,12 @@ def match_product_token(token):
     if qty <= 0:
         qty = 1
 
-    # 3. ตรวจสอบ name_part กับ ALIAS_MAP
     if name_part in ALIAS_MAP:
         return ("exact", ALIAS_MAP[name_part], qty, name_part)
 
-    # 4. ตรวจสอบ name_part กับ GROUP_KEYWORDS (เช่น galaxy, glx, glax, soju, tendo)
     if name_part in GROUP_KEYWORDS:
         return ("ambiguous", GROUP_KEYWORDS[name_part], qty, name_part)
 
-    # 5. ตรวจสอบคำย่อยของ Galaxy แบบยืดหยุ่น (เช่น glax, glx, galaxy, กาแล็ก)
     if any(k in name_part for k in ["galaxy", "glx", "glax", "กาแล"]):
         if any(k in name_part for k in ["แบน", "เล็ก", "350", "f"]):
             return ("exact", "galf", qty, name_part)
@@ -302,7 +288,6 @@ def match_product_token(token):
             return ("exact", "galr", qty, name_part)
         return ("ambiguous", ["galf", "galr"], qty, name_part)
 
-    # 6. ค้นหาแบบใกล้เคียง (Fuzzy match) โดยยังคงรักษาค่า qty ที่แยกไว้ได้!
     all_keys = list(ALIAS_MAP.keys()) + list(GROUP_KEYWORDS.keys())
     matches = get_close_matches(name_part, all_keys, n=1, cutoff=0.45)
     if matches:
@@ -312,7 +297,6 @@ def match_product_token(token):
         if matched_key in ALIAS_MAP:
             return ("exact", ALIAS_MAP[matched_key], qty, name_part)
 
-    # 7. หากไม่มั่นใจ ให้ขึ้นตัวเลือก Galaxy แบน/กลม พร้อมจำนวน qty ที่ระบุ (ห้ามปฏิเสธ)
     return ("ambiguous", ["galf", "galr"], qty, name_part)
 
 
@@ -425,10 +409,8 @@ def build_day_bubble(target_date_str, orders_list):
     }
 
 
-def flex_carousel_summary(days_data, extra_bubble=None):
+def flex_carousel_summary(days_data):
     bubbles = []
-    if extra_bubble:
-        bubbles.append(extra_bubble)
     for d_str, o_list in days_data.items():
         if len(o_list) > 0:
             bubbles.append(build_day_bubble(d_str, o_list))
@@ -462,16 +444,20 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
         })
 
     return {
-        "type": "bubble",
-        "size": "kilo",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "🔍 กรุณาเลือกประเภทสินค้า", "weight": "bold", "color": "#FF9900", "size": "md"},
-                {"type": "text", "text": f"คำสั่ง '{orig_query}' จำนวน {qty} • {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
-                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
-            ]
+        "type": "flex",
+        "altText": "กรุณาเลือกประเภทสินค้า",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "🔍 กรุณาเลือกประเภทสินค้า", "weight": "bold", "color": "#FF9900", "size": "md"},
+                    {"type": "text", "text": f"คำสั่ง '{orig_query}' จำนวน {qty} • {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
+                    {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
+                ]
+            }
         }
     }
 
@@ -480,15 +466,19 @@ def flex_edit_menu(order_id):
     ord_rec = get_order_by_id(order_id)
     if not ord_rec:
         return {
-            "type": "bubble",
-            "size": "kilo",
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "contents": [
-                    {"type": "text", "text": "⚠️ ไม่พบข้อมูลออเดอร์นี้", "weight": "bold", "color": "#FF334B", "size": "md"},
-                    {"type": "text", "text": f"รหัสออเดอร์ #{order_id} อาจถูกลบไปแล้ว", "size": "xs", "color": "#666666", "margin": "sm", "wrap": True}
-                ]
+            "type": "flex",
+            "altText": "ไม่พบข้อมูลออเดอร์",
+            "contents": {
+                "type": "bubble",
+                "size": "kilo",
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {"type": "text", "text": "⚠️ ไม่พบข้อมูลออเดอร์นี้", "weight": "bold", "color": "#FF334B", "size": "md"},
+                        {"type": "text", "text": f"รหัสออเดอร์ #{order_id} อาจถูกลบไปแล้ว", "size": "xs", "color": "#666666", "margin": "sm", "wrap": True}
+                    ]
+                }
             }
         }
 
@@ -535,16 +525,20 @@ def flex_edit_menu(order_id):
     })
 
     return {
-        "type": "bubble",
-        "size": "kilo",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": f"✏️ แก้ไข: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
-                {"type": "text", "text": f"วันที่ {dmy(ord_rec.get('ddate', ''))} • #{order_id}", "size": "xs", "color": "#666666", "wrap": True},
-                *item_sections
-            ]
+        "type": "flex",
+        "altText": f"เมนูแก้ไข: {sh_name}",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": f"✏️ แก้ไข: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
+                    {"type": "text", "text": f"วันที่ {dmy(ord_rec.get('ddate', ''))} • #{order_id}", "size": "xs", "color": "#666666", "wrap": True},
+                    *item_sections
+                ]
+            }
         }
     }
 
@@ -563,16 +557,20 @@ def flex_swap_sku_menu(order_id, old_code, qty):
         })
 
     return {
-        "type": "bubble",
-        "size": "kilo",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "🔄 เลือกสินค้าใหม่แทนที่", "weight": "bold", "color": "#1399FF", "size": "md"},
-                {"type": "text", "text": f"เปลี่ยนจาก: {old_name} ({qty})", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
-                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
-            ]
+        "type": "flex",
+        "altText": "เลือกสินค้าใหม่แทนที่",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "🔄 เลือกสินค้าใหม่แทนที่", "weight": "bold", "color": "#1399FF", "size": "md"},
+                    {"type": "text", "text": f"เปลี่ยนจาก: {old_name} ({qty})", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
+                ]
+            }
         }
     }
 
@@ -617,16 +615,20 @@ def flex_qty_menu(order_id, code):
         rows_box.append({"type": "box", "layout": "horizontal", "spacing": "xs", "contents": btns})
 
     return {
-        "type": "bubble",
-        "size": "kilo",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": f"🔢 ปรับจำนวน: {p_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
-                {"type": "text", "text": f"จำนวนปัจจุบัน: {curr_qty}", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
-                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": rows_box}
-            ]
+        "type": "flex",
+        "altText": f"ปรับจำนวน: {p_name}",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": f"🔢 ปรับจำนวน: {p_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
+                    {"type": "text", "text": f"จำนวนปัจจุบัน: {curr_qty}", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": rows_box}
+                ]
+            }
         }
     }
 
@@ -644,16 +646,20 @@ def flex_add_item_menu(order_id):
         })
 
     return {
-        "type": "bubble",
-        "size": "kilo",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "➕ เพิ่มสินค้าในออเดอร์", "weight": "bold", "color": "#1399FF", "size": "md"},
-                {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
-                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
-            ]
+        "type": "flex",
+        "altText": "เพิ่มสินค้าในออเดอร์",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "➕ เพิ่มสินค้าในออเดอร์", "weight": "bold", "color": "#1399FF", "size": "md"},
+                    {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
+                ]
+            }
         }
     }
 
@@ -714,7 +720,6 @@ def handle_message(event):
         if date_match:
             resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
             if resolved_dt:
-                # แยกชื่อร้านออกจากรายการสินค้า
                 if parts[1] == "ร้าน" and len(parts) >= 4:
                     shop_name = f"ร้าน {parts[2]}"
                     raw_item_tokens = parts[3:]
@@ -736,8 +741,8 @@ def handle_message(event):
                     if m_type == "exact":
                         order_items[code_or_list] = order_items.get(code_or_list, 0) + qty
                     elif m_type == "ambiguous":
-                        sel_bubble = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
-                        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=sel_bubble))
+                        sel_flex = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
+                        reply_flex(event["replyToken"], sel_flex)
                         return
 
                 if order_items:
@@ -775,15 +780,15 @@ def handle_postback(event):
 
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
-        edit_bubble = flex_edit_menu(order_id)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=edit_bubble))
+        edit_flex = flex_edit_menu(order_id)
+        reply_flex(event["replyToken"], edit_flex)
 
     elif action == "edit_swap_menu" and len(parts) == 4:
         order_id = int(parts[1])
         old_code = parts[2]
         qty = int(parts[3])
-        swap_bubble = flex_swap_sku_menu(order_id, old_code, qty)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=swap_bubble))
+        swap_flex = flex_swap_sku_menu(order_id, old_code, qty)
+        reply_flex(event["replyToken"], swap_flex)
 
     elif action == "edit_swap_do" and len(parts) == 5:
         order_id = int(parts[1])
@@ -799,8 +804,8 @@ def handle_postback(event):
     elif action == "edit_qty_menu" and len(parts) == 3:
         order_id = int(parts[1])
         code = parts[2]
-        qty_bubble = flex_qty_menu(order_id, code)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=qty_bubble))
+        qty_flex = flex_qty_menu(order_id, code)
+        reply_flex(event["replyToken"], qty_flex)
 
     elif action == "edit_qty_set" and len(parts) == 4:
         order_id = int(parts[1])
@@ -811,8 +816,8 @@ def handle_postback(event):
 
     elif action == "edit_add_menu" and len(parts) == 2:
         order_id = int(parts[1])
-        add_bubble = flex_add_item_menu(order_id)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=add_bubble))
+        add_flex = flex_add_item_menu(order_id)
+        reply_flex(event["replyToken"], add_flex)
 
     elif action == "select" and len(parts) == 5:
         resolved_dt = parts[1]
