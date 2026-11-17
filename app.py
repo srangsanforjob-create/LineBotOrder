@@ -6,7 +6,7 @@ import os
 import re
 import threading
 import traceback
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from difflib import get_close_matches
 from zoneinfo import ZoneInfo
 
@@ -41,7 +41,9 @@ PRODUCTS_DB = {
 }
 
 ALIAS_MAP = {
-    "lager": "l", "larner": "l", "rose": "r", "dunkel": "d",
+    "lager": "l", "larner": "l",
+    "rose": "r",
+    "dunkel": "d",
     "mug": "m", "pine": "p", "jug": "j", "tower": "t",
     "h40": "h40l", "h40lo": "h40l", "ceili": "h40l",
     "counter": "sct", "table": "st",
@@ -97,6 +99,9 @@ def load():
         DATA["pending"] = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (pending_res.data or [])]
     except Exception as e:
         print(f"❌ Load Error: {e}")
+
+
+INT_COLS = {"id", "shop_id", *CODES}
 
 
 def add(tab, d):
@@ -300,10 +305,7 @@ def build_day_bubble(target_date_str, orders_list):
 
 
 def flex_carousel_summary(days_data, extra_bubble=None):
-    # กรองเอาเฉพาะวันที่มีออเดอร์จริงๆ หรือมี extra_bubble (การ์ดเลือกสินค้า)
-    filtered_days = {d_str: o_list for d_str, o_list in days_data.items() if len(o_list) > 0}
-    
-    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in filtered_days.items()]
+    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in days_data.items() if len(o_list) > 0]
     if extra_bubble:
         bubbles.append(extra_bubble)
         
@@ -372,16 +374,10 @@ def callback():
     return "OK", 200
 
 
-def get_recent_days_data():
-    # ดึงข้อมูลย้อนหลัง 7 วันเพื่อให้ครอบคลุมวันที่มีออเดอร์
-    t = today()
-    days_data = {}
-    for i in range(7):
-        dt = (t - timedelta(days=i)).isoformat()
-        matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
-        if matched:
-            days_data[dt] = matched
-    return days_data
+def get_all_valid_days_data():
+    all_dates = set(o.get("ddate") for o in DATA["orders"] if o.get("ddate"))
+    sorted_dates = sorted(list(all_dates))
+    return {sd: [o for o in DATA["orders"] if o.get("ddate") == sd] for sd in sorted_dates}
 
 
 def handle_message(event):
@@ -411,7 +407,7 @@ def handle_message(event):
                     if matched: days_data[dt] = matched
         
         if not days_data:
-            days_data = get_recent_days_data()
+            days_data = get_all_valid_days_data()
                 
         reply_flex(event["replyToken"], flex_carousel_summary(days_data))
         return
@@ -440,10 +436,7 @@ def handle_message(event):
                     elif m_type == "ambiguous":
                         sel_bubble = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
                         matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                        days_data = get_recent_days_data()
-                        if resolved_dt not in days_data and matched:
-                            days_data[resolved_dt] = matched
-                        reply_flex(event["replyToken"], flex_carousel_summary(days_data, extra_bubble=sel_bubble))
+                        reply_flex(event["replyToken"], flex_carousel_summary({resolved_dt: matched}, extra_bubble=sel_bubble))
                         return
 
                 if order_items:
@@ -456,7 +449,7 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
                         
-                    reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
+                    reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -467,11 +460,11 @@ def handle_postback(event):
     if parts[0] == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
     elif parts[0] == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
     elif parts[0] == "select" and len(parts) == 5:
         resolved_dt = parts[1]
         shop_id = int(parts[2])
@@ -487,7 +480,7 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
             
-        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
 
 
 def reply_text(rt, text):
