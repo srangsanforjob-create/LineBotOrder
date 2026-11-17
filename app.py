@@ -70,7 +70,7 @@ ALIAS_MAP = {
     "sojustrawberry": "sojs", "sojs": "sojs"
 }
 
-# --- STATUSES (เพิ่ม credit เข้าไปเรียบร้อย) ---
+# --- STATUSES ---
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
     "ordered": ("✅", "Order แล้ว", "#06C755"),
@@ -247,7 +247,7 @@ def handle_message(event):
         send_reply(reply_token, res_obj)
         return
 
-    # รูปแบบการพิมพ์ออเดอร์ เช่น: 17 เจ๊โน galf 2
+    # รูปแบบคำสั่งพิมพ์ออเดอร์ เช่น: 17 เจ๊โน galf 2
     parts = text.split()
     if len(parts) >= 3 and parts[0].isdigit():
         d_val = int(parts[0])
@@ -259,7 +259,7 @@ def handle_message(event):
         shop = get_or_create_shop(shop_name)
         shop_id = shop["id"]
 
-        # ตรวจสอบวงเงิน (Credit Limit Check)
+        # ตรวจสอบวงเงินเครดิต
         credit_limit = num(shop.get("credit_limit", 50000))
         current_balance = num(shop.get("current_balance", 0))
         estimated_cost = qty * 500  # ตัวอย่างราคาประเมินต่อหน่วย
@@ -273,7 +273,7 @@ def handle_message(event):
 
         code = ALIAS_MAP.get(raw_product, "galf")
 
-        # บันทึกลง Supabase (กำหนดสถานะเริ่มต้นเป็น credit ได้ หรือคง pending ไว้ตามต้องการ)
+        # บันทึกหรืออัปเดตข้อมูลลง Supabase
         _, current_orders = fetch_fresh_data()
         existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
         
@@ -285,7 +285,7 @@ def handle_message(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
             supabase.table("orders").insert(payload).execute()
 
-        # อัปเด่ายอดเงินสะสมของร้านใน Supabase
+        # อัปเดตยอดเงินสะสมของร้านใน Supabase
         supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
 
         # ตอบกลับด้วยการ์ดสรุปผลทันที
