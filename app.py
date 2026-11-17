@@ -22,23 +22,14 @@ app = Flask(__name__)
 
 # --- FULL PRODUCT DATABASE & MAPPINGS ---
 PRODUCTS_DB = {
-    # Draft Beer
     "l": "Lager", "r": "Rose", "d": "Dunkel",
-    # Glasses & Towers
     "m": "MUG", "p": "PINE", "j": "JUG", "t": "TOWER",
-    # Dispensers
     "h40l": "Hoshizaki 40L", "h90": "Hoshizaki 90L", "h120": "Hoshizaki 120L",
-    # Stainless Furniture
     "sct": "Stainless Counter", "st": "Stainless Table",
-    # POSM & Marketing
     "ast": "A-Stand", "std": "Standee", "aa5": "อะคริลิก A5", "aa6": "อะคริลิก A6",
-    # Galaxy
     "galf": "Galaxy แบน 350ml", "galr": "Galaxy กลม 700ml",
-    # Tendo
     "tend3": "Tendo 360ml", "tend7": "Tendo 700ml",
-    # Kacha
     "kach": "Kacha 375ml",
-    # Soju
     "sojy": "Soju โยเกิร์ต", "sojp": "Soju พีช",
     "sojg": "Soju องุ่น", "sojf": "Soju เกรปฟรุ๊ต", "sojs": "Soju สตรอเบอรี่"
 }
@@ -46,28 +37,28 @@ PRODUCTS_DB = {
 CODES = list(PRODUCTS_DB.keys())
 
 ALIAS_MAP = {
-    "lager": "l", "l": "l",
-    "rose": "r", "r": "r",
-    "dunkel": "d", "d": "d",
-    "mug": "m", "m": "m",
-    "pine": "p", "p": "p",
-    "jug": "j", "j": "j",
-    "tower": "t", "t": "t",
+    "lager": "l", "ลากิอร์": "l", "ลีโอ": "l", "เบียร์": "l", "l": "l",
+    "rose": "r", "โรส": "r", "r": "r",
+    "dunkel": "d", "ดุงเกล": "ดังก์เกล": "d", "d": "d",
+    "mug": "m", "แก้วมัค": "แก้ว": "m", "m": "m",
+    "pine": "p", "ไพน์": "p", "p": "p",
+    "jug": "j", "เหยือก": "j", "j": "j",
+    "tower": "t", "ทาวเวอร์": "t", "t": "t",
     "h40l": "h40l", "h90": "h90", "h120": "h120",
-    "counter": "sct", "sct": "sct",
-    "table": "st", "st": "st",
+    "counter": "sct", "เคาน์เตอร์": "sct", "sct": "sct",
+    "table": "st", "โต๊ะ": "st", "st": "st",
     "astand": "ast", "ast": "ast",
-    "standee": "std", "std": "std",
-    "galaxyแบน": "galf", "galf": "galf", "gal-f": "galf",
-    "galaxyกลม": "galr", "galr": "galr", "gal-r": "galr",
-    "tendo360": "tend3", "tend3": "tend3",
-    "tendo700": "tend7", "tend7": "tend7",
-    "kacha": "kach", "kach": "kach",
-    "sojuyogurt": "sojy", "sojy": "sojy",
-    "sojupeach": "sojp", "sojp": "sojp",
-    "sojugrape": "sojg", "sojg": "sojg",
+    "standee": "std", "สแตนดี้": "std", "std": "std",
+    "galaxyแบน": "galf", "กาแล็กซี่แบน": "galf", "galf": "galf", "gal-f": "galf", "แบน": "galf",
+    "galaxyกลม": "galr", "กาแล็กซี่กลม": "galr", "galr": "galr", "gal-r": "galr", "กลม": "galr",
+    "tendo360": "tend3", "เทนโด360": "tend3", "tend3": "tend3",
+    "tendo700": "tend7", "เทนโด700": "tend7", "tend7": "tend7",
+    "kacha": "kach", "คชา": "kach", "kach": "kach",
+    "sojuyogurt": "sojy", "โซจโยเกิร์ต": "sojy", "sojy": "sojy",
+    "sojupeach": "sojp", "โซจพีช": "sojp", "sojp": "sojp",
+    "sojugrape": "sojg", "โซจองุ่น": "sojg", "sojg": "sojg",
     "soju grapefruit": "sojf", "sojf": "sojf",
-    "sojustrawberry": "sojs", "sojs": "sojs"
+    "sojustrawberry": "sojs", "โซจสตรอ": "sojs", "sojs": "sojs"
 }
 
 STATUSES = {
@@ -156,32 +147,50 @@ def build_summary_carousel():
     if not orders:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
 
-    bubbles = []
+    # จัดกลุ่มออเดอร์ตามวันที่ (Group orders by ddate)
+    grouped_by_date = {}
     for o in orders:
-        sh = shop_by_id(o["shop_id"])
-        shop_name = sh["name"] if sh else "ร้านค้า"
-        credit_limit = num(sh.get("credit_limit", 50000)) if sh else 50000
-        current_balance = num(sh.get("current_balance", 0)) if sh else 0
-        
-        date_str = o.get("ddate", "ไม่ระบุ")
-        status_key = o.get("status", "pending")
-        icon, label, color = STATUSES.get(status_key, ("⏳", "Pending", "#FF9900"))
+        dt = o.get("ddate", "ไม่ระบุ")
+        if dt not in grouped_by_date:
+            grouped_by_date[dt] = []
+        grouped_by_date[dt].append(o)
 
-        item_rows = []
-        for code in CODES:
-            q = num(o.get(code, 0))
-            if q > 0:
-                p_name = PRODUCTS_DB.get(code, code)
-                item_rows.append({
-                    "type": "box",
-                    "layout": "horizontal",
-                    "contents": [
-                        {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
-                        {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
-                    ]
-                })
-        if not item_rows:
-            item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
+    bubbles = []
+    # วนลูปสร้าง Bubble แยกตามแต่ละวัน
+    for date_str, date_orders in sorted(grouped_by_date.items()):
+        shop_contents = []
+        
+        for idx, o in enumerate(date_orders):
+            sh = shop_by_id(o["shop_id"])
+            shop_name = sh["name"] if sh else "ร้านค้า"
+            status_key = o.get("status", "pending")
+            icon, label, color = STATUSES.get(status_key, ("⏳", "Pending", "#FF9900"))
+
+            item_rows = []
+            for code in CODES:
+                q = num(o.get(code, 0))
+                if q > 0:
+                    p_name = PRODUCTS_DB.get(code, code)
+                    item_rows.append({
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
+                            {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
+                        ]
+                    })
+            if not item_rows:
+                item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
+
+            # เพิ่มเส้นกั้นระหว่างร้าน (ถ้าร้านไม่ใช่ร้านแรกในวันนั้น)
+            if idx > 0:
+                shop_contents.append({"type": "separator", "margin": "lg"})
+
+            shop_contents.extend([
+                {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
+                {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
+                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
+            ])
 
         bubbles.append({
             "type": "bubble",
@@ -190,25 +199,20 @@ def build_summary_carousel():
                 "type": "box",
                 "layout": "vertical",
                 "contents": [
-                    {"type": "text", "text": f"📅 {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#555555"}
-                ]
+                    {"type": "text", "text": f"📅 สรุปยอดวันที่ {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#ffffff"}
+                ],
+                "backgroundColor": "#06C755"
             },
             "body": {
                 "type": "box",
                 "layout": "vertical",
-                "contents": [
-                    {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111"},
-                    {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
-                    {"type": "text", "text": f"💳 วงเงินคงเหลือ: {credit_limit - current_balance:,.2f} / {credit_limit:,.2f} ฿", "size": "xxs", "color": "#888888", "margin": "sm"},
-                    {"type": "separator", "margin": "md"},
-                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": item_rows}
-                ]
+                "contents": shop_contents
             }
         })
 
     return {
         "type": "flex",
-        "altText": "สรุปรายการออเดอร์",
+        "altText": "สรุปรายการออเดอร์รายวัน",
         "contents": {
             "type": "carousel",
             "contents": bubbles[:10]
@@ -243,18 +247,45 @@ def handle_message(event):
 
     print(f"📥 Received Text: {text}")
 
-    if text == "สรุป":
+    if text in ["สรุป", "ยอด", "list"]:
         res_obj = build_summary_carousel()
         send_reply(reply_token, res_obj)
         return
 
-    if text == "ดูรหัส":
-        product_list = "\n".join([f"- {k}: {v}" for k, v in PRODUCTS_DB.items()])
-        send_reply(reply_token, {"type": "text", "text": f"📋 รหัสสินค้าทั้งหมด:\n{product_list}"})
+    if text in ["คู่มือ", "ช่วยเหลือ", "help"]:
+        help_text = (
+            "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
+            "1️⃣ สั่งแบบใช้งวดวันนี้ (ง่ายที่สุด):\n"
+            "พิมพ์ [ชื่อร้าน] [สินค้า] [จำนวน]\n"
+            "เช่น: เจ๊โน galf 2\n\n"
+            "2️⃣ สั่งแบบระบุวัน:\n"
+            "พิมพ์ [วัน] [ชื่อร้าน] [สินค้า] [จำนวน]\n"
+            "เช่น: 17 เจ๊โน galf 2\n\n"
+            "3️⃣ คำสั่งอื่นๆ:\n"
+            "- พิมพ์ 'สรุป' เพื่อดูการ์ดออเดอร์ทั้งหมด\n"
+            "- พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้า"
+        )
+        send_reply(reply_token, {"type": "text", "text": help_text})
         return
 
-    # รูปแบบคำสั่งออเดอร์ เช่น: 17 เจ๊โน galf 2
+    if text == "ดูรหัส":
+        product_list = "\n".join([f"- {k}: {v}" for k, v in PRODUCTS_DB.items()])
+        send_reply(reply_token, {"type": "text", "text": f"📋 รหัส/คำย่อสินค้า:\n{product_list}"})
+        return
+
     parts = text.split()
+    
+    # รูปแบบที่ 1: [ชื่อร้าน] [สินค้า] [จำนวน] (ใช้วันนี้อัตโนมัติ)
+    if len(parts) >= 2 and not parts[0].isdigit():
+        resolved_dt = today().isoformat()
+        shop_name = parts[0]
+        raw_product = parts[1].lower()
+        qty = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 1
+
+        process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty)
+        return
+
+    # รูปแบบที่ 2: [วัน] [ชื่อร้าน] [สินค้า] [จำนวน]
     if len(parts) >= 3 and parts[0].isdigit():
         d_val = int(parts[0])
         resolved_dt = resolve_date(d_val)
@@ -262,63 +293,62 @@ def handle_message(event):
         raw_product = parts[2].lower()
         qty = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 1
 
-        print(f"🛒 Parsed Order -> Date: {resolved_dt}, Shop: {shop_name}, Product: {raw_product}, Qty: {qty}")
-
-        shop = get_or_create_shop(shop_name)
-        if not shop:
-            send_reply(reply_token, {"type": "text", "text": f"❌ ไม่สามารถสร้างหรือหาร้าน '{shop_name}' ในระบบได้"})
-            return
-            
-        shop_id = shop["id"]
-
-        # ตรวจสอบวงเงินเครดิต
-        credit_limit = num(shop.get("credit_limit", 50000))
-        current_balance = num(shop.get("current_balance", 0))
-        estimated_cost = qty * 500  # ตัวอย่างราคาประเมินต่อหน่วย
-        
-        if current_balance + estimated_cost > credit_limit:
-            send_reply(reply_token, {
-                "type": "text", 
-                "text": f"⚠️ ขออภัยครับ วงเงินร้าน {shop_name} ไม่พอสำหรับการสั่งซื้อนี้!\n(วงเงินจำกัด: {credit_limit:,.2f} ฿, ยอดใช้ไป: {current_balance:,.2f} ฿)"
-            })
-            return
-
-        code = ALIAS_MAP.get(raw_product)
-        if not code:
-            send_reply(reply_token, {
-                "type": "text", 
-                "text": f"❌ ไม่พบรหัสสินค้า '{raw_product}' พิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าทั้งหมดครับ"
-            })
-            return
-
-        # บันทึกหรืออัปเดตข้อมูลลง Supabase
-        _, current_orders = fetch_fresh_data()
-        existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
-        
-        try:
-            if existing:
-                oid = existing["id"]
-                curr_q = num(existing.get(code, 0))
-                supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
-            else:
-                payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
-                supabase.table("orders").insert(payload).execute()
-
-            # อัปเดตยอดเงินสะสมของร้านใน Supabase
-            supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
-            print("✅ Order Saved & Balance Updated Successfully")
-
-        except Exception as db_err:
-            print(f"❌ Supabase Write Error: {db_err}")
-            send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล: {db_err}"})
-            return
-
-        # ตอบกลับด้วยการ์ดสรุปผลทันที
-        res_obj = build_summary_carousel()
-        send_reply(reply_token, res_obj)
+        process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty)
         return
 
-    send_reply(reply_token, {"type": "text", "text": "💡 คำสั่งที่ไม่รู้จัก\n- พิมพ์ 'สรุป' เพื่อดูยอดออเดอร์\n- พิมพ์ 'ดูรหัส' เพื่อดูรหัสสินค้า\n- หรือสั่งออเดอร์เช่น '17 เจ๊โน galf 2'"})
+    send_reply(reply_token, {"type": "text", "text": "💡 ไม่เข้าใจคำสั่ง พิมพ์ 'คู่มือ' เพื่อดูวิธีสั่งซื้อครับ"})
+
+def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
+    print(f"🛒 Processing Order -> Date: {resolved_dt}, Shop: {shop_name}, Product: {raw_product}, Qty: {qty}")
+
+    shop = get_or_create_shop(shop_name)
+    if not shop:
+        send_reply(reply_token, {"type": "text", "text": f"❌ ไม่สามารถสร้างหรือหาร้าน '{shop_name}' ในระบบได้"})
+        return
+        
+    shop_id = shop["id"]
+
+    credit_limit = num(shop.get("credit_limit", 50000))
+    current_balance = num(shop.get("current_balance", 0))
+    estimated_cost = qty * 500  
+    
+    if current_balance + estimated_cost > credit_limit:
+        send_reply(reply_token, {
+            "type": "text", 
+            "text": f"⚠️ ขออภัยครับ วงเงินร้าน {shop_name} ไม่พอสำหรับการสั่งซื้อนี้!\n(วงเงินจำกัด: {credit_limit:,.2f} ฿, ยอดใช้ไป: {current_balance:,.2f} ฿)"
+        })
+        return
+
+    code = ALIAS_MAP.get(raw_product)
+    if not code:
+        send_reply(reply_token, {
+            "type": "text", 
+            "text": f"❌ ไม่พบสินค้า '{raw_product}' พิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าทั้งหมดครับ"
+        })
+        return
+
+    _, current_orders = fetch_fresh_data()
+    existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
+    
+    try:
+        if existing:
+            oid = existing["id"]
+            curr_q = num(existing.get(code, 0))
+            supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
+        else:
+            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
+            supabase.table("orders").insert(payload).execute()
+
+        supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
+        print("✅ Order Saved & Balance Updated Successfully")
+
+    except Exception as db_err:
+        print(f"❌ Supabase Write Error: {db_err}")
+        send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล: {db_err}"})
+        return
+
+    res_obj = build_summary_carousel()
+    send_reply(reply_token, res_obj)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
