@@ -97,7 +97,7 @@ def get_bangkok_date_str():
 def fetch_data(chat_id):
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).execute()
+        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).order("ddate", desc=True).execute()
         shops = shops_res.data or []
         orders = orders_res.data or []
         return shops, orders
@@ -132,7 +132,7 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
         
-        status = 'pending'
+        status = 'pending'  # Default เป็น pending ถ้าไม่มีคำต่อท้าย
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
             status = STATUS_KEYWORDS[last_word]
@@ -201,43 +201,90 @@ def build_carousel(chat_id):
         return {"type": "text", "text": "ยังไม่มีรายการออเดอร์ในแชทนี้"}
 
     shop_map = {str(s["id"]): s for s in shops}
+    
+    # จัดกลุ่มออเดอร์ตามวันที่ (ddate)
+    grouped_by_date = {}
+    for order in orders:
+        ddate = order.get("ddate", get_bangkok_date_str())
+        if ddate not in grouped_by_date:
+            grouped_by_date[ddate] = []
+        grouped_by_date[ddate].append(order)
+
     bubbles = []
     
-    for order in orders:
-        s_id = str(order.get("shop_id"))
-        shop_info = shop_map.get(s_id)
-        shop_name = shop_info["name"] if shop_info else "ร้านค้า"
-        order_status = order.get("status", "pending")
-        icon, label, color = STATUS_LABELS.get(order_status, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
+    for ddate, date_orders in grouped_by_date.items():
+        daily_totals = {code: 0 for code in CODES}
+        content_blocks = [
+            {"type": "text", "text": f"📅 สรุปยอดวันที่ {ddate}", "weight": "bold", "size": "md", "color": "#111111"},
+            {"type": "separator", "margin": "md"}
+        ]
+        
+        for order in date_orders:
+            s_id = str(order.get("shop_id"))
+            shop_info = shop_map.get(s_id)
+            shop_name = shop_info["name"] if shop_info else "ร้านค้า"
+            order_status = order.get("status", "pending")
+            icon, label, color = STATUS_LABELS.get(order_status, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
 
-        item_rows = []
-        for code in CODES:
-            q = safe_int(order.get(code))
-            if q > 0:
-                p_name = PRODUCTS_DB.get(code, code)
-                item_rows.append({
-                    "type": "box", "layout": "horizontal",
-                    "contents": [
-                        {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
-                        {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
-                    ]
-                })
-        if not item_rows:
-            item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
+            item_rows = []
+            for code in CODES:
+                q = safe_int(order.get(code))
+                if q > 0:
+                    daily_totals[code] += q
+                    p_name = PRODUCTS_DB.get(code, code)
+                    item_rows.append({
+                        "type": "box", "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
+                            {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
+                        ]
+                    })
+            if not item_rows:
+                item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
 
-        bubbles.append({
-            "type": "bubble", "size": "kilo",
-            "body": {
-                "type": "box", "layout": "vertical",
+            content_blocks.append({
+                "type": "box", "layout": "vertical", "margin": "md",
                 "contents": [
-                    {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111"},
+                    {"type": "text", "text": shop_name, "weight": "bold", "size": "sm", "color": "#0066cc"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color},
-                    {"type": "separator", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
                 ]
+            })
+
+        # สร้างกล่องรวมยอดสินค้าประจำวันไว้ที่ท้ายบับเบิ้ลของวันนั้นๆ
+        summary_rows = []
+        for code in CODES:
+            tot = daily_totals[code]
+            if tot > 0:
+                p_name = PRODUCTS_DB.get(code, code)
+                summary_rows.append({
+                    "type": "horizontal", "layout": "horizontal",
+                    "contents": [
+                        {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#ffffff", "flex": 4},
+                        {"type": "text", "text": str(tot), "size": "sm", "align": "end", "weight": "bold", "color": "#ffffff", "flex": 1}
+                    ]
+                })
+        
+        if summary_rows:
+            content_blocks.append({"type": "separator", "margin": "lg"})
+            content_blocks.append({
+                "type": "box", "layout": "vertical", "margin": "md", "paddingAll": "md",
+                "backgroundColor": "#222222", "cornerRadius": "md",
+                "contents": [
+                    {"type": "text", "text": "📦 รวมยอดสินค้าประจำวันนี้นี้", "weight": "bold", "size": "sm", "color": "#ffcc00"},
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": summary_rows}
+                ]
+            })
+
+        bubbles.append({
+            "type": "bubble", "size": "mega",
+            "body": {
+                "type": "box", "layout": "vertical",
+                "contents": content_blocks
             }
         })
-    return {"type": "flex", "altText": "รายการออเดอร์", "contents": {"type": "carousel", "contents": bubbles[:10]}}
+
+    return {"type": "flex", "altText": "สรุปรายการออเดอร์ตามวัน", "contents": {"type": "carousel", "contents": bubbles[:10]}}
 
 @app.route("/callback", methods=["POST"])
 def callback():
