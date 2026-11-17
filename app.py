@@ -98,7 +98,7 @@ def format_thai_date(date_str):
         month_name = MONTHS_TH[dt.month - 1]
         year_th = dt.year + 543
         return f"วัน{day_name} ที่ {dt.day} {month_name} {year_th}"
-    except:
+    except Exception:
         return f"วันที่ {date_str}"
 
 def safe_int(val):
@@ -110,10 +110,36 @@ def safe_int(val):
 def get_bangkok_date_str():
     return datetime.now(TZ).strftime("%Y-%m-%d")
 
+def resolve_date_token(token):
+    """แปลงเลขวันที่นำหน้า (เช่น 19 หรือ 19/11) ให้เป็น YYYY-MM-DD"""
+    now_bkk = datetime.now(TZ)
+    m_full = re.match(r"^(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?$", token)
+    if m_full:
+        d = int(m_full.group(1))
+        m = int(m_full.group(2))
+        y = int(m_full.group(3)) if m_full.group(3) else now_bkk.year
+        if y > 2500:
+            y -= 543
+        elif y < 100:
+            y += 2000
+        try:
+            return datetime(y, m, d).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    if re.match(r"^\d{1,2}$", token):
+        d = int(token)
+        if 1 <= d <= 31:
+            try:
+                return now_bkk.replace(day=d).strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+    return None
+
 def fetch_data(chat_id):
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).order("id", desc=False).execute()
+        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).order("ddate", desc=False).order("id", desc=False).execute()
         shops = shops_res.data or []
         orders = orders_res.data or []
         return shops, orders
@@ -122,7 +148,9 @@ def fetch_data(chat_id):
         return [], []
 
 def get_or_create_shop(shop_name):
-    clean_name = shop_name.strip()
+    clean_name = re.sub(r"^(?:วันที่\s*)?\d{1,2}(?:[/\-]\d{1,2})?\s+", "", shop_name.strip()).strip()
+    if not clean_name:
+        clean_name = "ร้านค้าทั่วไป"
     if not clean_name.startswith("ร้าน"):
         clean_name = f"ร้าน {clean_name}"
     try:
@@ -147,31 +175,34 @@ def parse_order_text(raw_text):
         tokens = line.split()
         if not tokens:
             continue
-        
+
+        # 1. ตรวจสอบสถานะท้ายบรรทัด
         status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
             status = STATUS_KEYWORDS[last_word]
             tokens.pop()
-        
+
         if not tokens:
             continue
 
-        # ตรวจสอบวันที่ขึ้นต้นบรรทัด (เช่น 18 หรือ 19)
+        # 2. แยกวันที่หน้าสุดออกจากชื่อร้านอย่างเด็ดขาด
         order_date = get_bangkok_date_str()
-        if re.match(r"^\d{1,2}$", tokens[0]):
-            day_val = int(tokens[0])
-            if 1 <= day_val <= 31:
-                try:
-                    now_bkk = datetime.now(TZ)
-                    order_date = now_bkk.replace(day=day_val).strftime("%Y-%m-%d")
-                    tokens.pop(0)
-                except ValueError:
-                    pass
+        if tokens[0] in ["วันที่", "วัน"] and len(tokens) > 1:
+            parsed_dt = resolve_date_token(tokens[1])
+            if parsed_dt:
+                order_date = parsed_dt
+                tokens = tokens[2:]
+        else:
+            parsed_dt = resolve_date_token(tokens[0])
+            if parsed_dt:
+                order_date = parsed_dt
+                tokens.pop(0)
 
         if not tokens:
             continue
 
+        # 3. หาตำแหน่งเริ่มต้นของรายการสินค้า
         first_item_idx = -1
         for i, token in enumerate(tokens):
             clean_tok = token.lower().strip()
@@ -182,20 +213,20 @@ def parse_order_text(raw_text):
             if m and m.group(1).lower() in ALIAS_MAP:
                 first_item_idx = i
                 break
-        
+
         if first_item_idx == -1:
             global_errors.append(f"ไม่พบรายการสินค้าในบรรทัด: {line}")
             continue
 
-        shop_name = " ".join(tokens[:first_item_idx]) if first_item_idx > 0 else "ร้านค้าทั่วไป"
+        shop_name = " ".join(tokens[:first_item_idx]).strip() if first_item_idx > 0 else "ร้านค้าทั่วไป"
         item_tokens = tokens[first_item_idx:]
-        
+
         items = {}
         i = 0
         while i < len(item_tokens):
             tok = item_tokens[i]
             clean_tok = tok.lower().strip()
-            
+
             m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_tok)
             if m:
                 p_part = m.group(1)
@@ -205,18 +236,18 @@ def parse_order_text(raw_text):
                     items[code] = items.get(code, 0) + qty_part
                     i += 1
                     continue
-            
+
             if clean_tok in ALIAS_MAP:
                 code = ALIAS_MAP[clean_tok]
                 qty = 1
-                if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i+1]):
-                    qty = safe_int(item_tokens[i+1])
+                if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i + 1]):
+                    qty = safe_int(item_tokens[i + 1])
                     i += 1
                 items[code] = items.get(code, 0) + qty
             else:
                 global_errors.append(f"ไม่รู้จักสินค้า: {tok}")
             i += 1
-            
+
         if items:
             parsed_items_list.append({
                 "ddate": order_date,
@@ -224,8 +255,18 @@ def parse_order_text(raw_text):
                 "status": status,
                 "items": items
             })
-            
+
     return parsed_items_list, global_errors
+
+def make_mini_btn(label, data, color, style="primary"):
+    return {
+        "type": "button",
+        "action": {"type": "postback", "label": label, "data": data},
+        "style": style,
+        "color": color,
+        "height": "sm",
+        "margin": "xs"
+    }
 
 def build_carousel(chat_id):
     shops, orders = fetch_data(chat_id)
@@ -233,49 +274,38 @@ def build_carousel(chat_id):
         return {"type": "text", "text": "ยังไม่มีรายการออเดอร์ในแชทนี้"}
 
     shop_map = {str(s["id"]): s for s in shops}
-    
+
+    # จัดกลุ่มตาม ddate อย่างเคร่งครัด (1 การ์ด = 1 วัน)
     grouped_by_date = {}
     for order in orders:
-        ddate = order.get("ddate", get_bangkok_date_str())
+        ddate = str(order.get("ddate") or get_bangkok_date_str())
         if ddate not in grouped_by_date:
             grouped_by_date[ddate] = []
         grouped_by_date[ddate].append(order)
 
     bubbles = []
-    
-    for ddate, date_orders in grouped_by_date.items():
+
+    for ddate in sorted(grouped_by_date.keys()):
+        date_orders = grouped_by_date[ddate]
         daily_totals = {code: 0 for code in CODES}
         formatted_date = format_thai_date(ddate)
-        
+
         content_blocks = [
             {"type": "text", "text": formatted_date, "weight": "bold", "size": "md", "color": "#111111"},
+            # ปุ่มจัดการภาพรวมทั้งวัน
             {
-                "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "md",
+                "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "md",
                 "contents": [
-                    {
-                        "type": "button", "action": {
-                            "type": "postback", "label": "Order แล้ว",
-                            "data": f"action=update_daily&date={ddate}&status=ordered"
-                        }, "style": "primary", "color": "#06C755", "height": "sm"
-                    },
-                    {
-                        "type": "button", "action": {
-                            "type": "postback", "label": "อัปสลิปแล้ว",
-                            "data": f"action=update_daily&date={ddate}&status=slip"
-                        }, "style": "primary", "color": "#00B900", "height": "sm"
-                    },
-                    {
-                        "type": "button", "action": {
-                            "type": "postback", "label": "ยกเลิกทั้งหมด",
-                            "data": f"action=delete_daily&date={ddate}"
-                        }, "style": "secondary", "color": "#FF334B", "height": "sm"
-                    }
+                    make_mini_btn("Order ทั้งวัน", f"action=update_daily&date={ddate}&status=ordered", "#06C755"),
+                    make_mini_btn("สลิปทั้งวัน", f"action=update_daily&date={ddate}&status=slip", "#00B900"),
+                    make_mini_btn("ลบทั้งวัน", f"action=delete_daily&date={ddate}", "#FF334B", "secondary")
                 ]
             },
             {"type": "separator", "margin": "lg"}
         ]
-        
+
         for order in date_orders:
+            o_id = order.get("id")
             s_id = str(order.get("shop_id"))
             shop_info = shop_map.get(s_id)
             shop_name = shop_info["name"] if shop_info else "ร้านค้า"
@@ -298,12 +328,32 @@ def build_carousel(chat_id):
             if not item_rows:
                 item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
 
+            # ปุ่มเปลี่ยนสถานะของแต่ละร้าน/ออเดอร์ (ครบทุกสถานะ)
+            order_buttons_row1 = {
+                "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "sm",
+                "contents": [
+                    make_mini_btn("Order", f"action=update_order&id={o_id}&status=ordered", "#06C755"),
+                    make_mini_btn("สลิป", f"action=update_order&id={o_id}&status=slip", "#00B900"),
+                    make_mini_btn("เครดิต", f"action=update_order&id={o_id}&status=credit", "#0099FF")
+                ]
+            }
+            order_buttons_row2 = {
+                "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "xs",
+                "contents": [
+                    make_mini_btn("รอOrder", f"action=update_order&id={o_id}&status=pending", "#FF9900"),
+                    make_mini_btn("เกินกำหนด", f"action=update_order&id={o_id}&status=overdue", "#E65100"),
+                    make_mini_btn("ลบ", f"action=delete_order&id={o_id}", "#FF334B", "secondary")
+                ]
+            }
+
             content_blocks.append({
                 "type": "box", "layout": "vertical", "margin": "md",
                 "contents": [
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "sm", "color": "#0066cc"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows},
+                    order_buttons_row1,
+                    order_buttons_row2,
                     {"type": "separator", "margin": "md"}
                 ]
             })
@@ -320,7 +370,7 @@ def build_carousel(chat_id):
                         {"type": "text", "text": str(tot), "size": "sm", "align": "end", "weight": "bold", "color": "#ffffff", "flex": 1}
                     ]
                 })
-        
+
         if summary_rows:
             content_blocks.append({
                 "type": "box", "layout": "vertical", "margin": "md", "paddingAll": "md",
@@ -339,7 +389,11 @@ def build_carousel(chat_id):
             }
         })
 
-    return {"type": "flex", "altText": "สรุปรายการออเดอร์ตามวัน", "contents": {"type": "carousel", "contents": bubbles[:10]}}
+    return {
+        "type": "flex",
+        "altText": "สรุปรายการออเดอร์ตามวัน",
+        "contents": {"type": "carousel", "contents": bubbles[:10]}
+    }
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -352,62 +406,98 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
+            source = event.get("source", {})
+            chat_type = source.get("type", "user")
+            if chat_type == "group":
+                chat_id = source.get("groupId")
+            elif chat_type == "room":
+                chat_id = source.get("roomId")
+            else:
+                chat_id = source.get("userId", "user")
+
+            reply_token = event.get("replyToken", "")
+
+            # --- HANDLE POSTBACK BUTTONS ---
             if event.get("type") == "postback":
                 data_str = event.get("postback", {}).get("data", "")
-                query_params = dict(qp.split("=") for qp in data_str.split("&") if "=" in qp)
+                query_params = dict(qp.split("=", 1) for qp in data_str.split("&") if "=" in qp)
                 action = query_params.get("action")
-                target_date = query_params.get("date")
-                source = event.get("source", {})
-                chat_type = source.get("type", "user")
-                if chat_type == "group": chat_id = source.get("groupId")
-                elif chat_type == "room": chat_id = source.get("roomId")
-                else: chat_id = source.get("userId", "user")
-                
-                reply_token = event.get("replyToken", "")
-                
-                if action == "update_daily" and target_date:
+
+                if action == "update_daily":
+                    target_date = query_params.get("date")
                     new_status = query_params.get("status", "pending")
-                    supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
-                    send_reply(reply_token, [build_carousel(chat_id)])
-                elif action == "delete_daily" and target_date:
-                    supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
-                    send_reply(reply_token, [build_carousel(chat_id)])
+                    if target_date:
+                        supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                        send_reply(reply_token, [build_carousel(chat_id)])
+
+                elif action == "delete_daily":
+                    target_date = query_params.get("date")
+                    if target_date:
+                        supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                        send_reply(reply_token, [build_carousel(chat_id)])
+
+                elif action == "update_order":
+                    order_id = query_params.get("id")
+                    new_status = query_params.get("status", "pending")
+                    if order_id:
+                        supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("id", order_id).execute()
+                        send_reply(reply_token, [build_carousel(chat_id)])
+
+                elif action == "delete_order":
+                    order_id = query_params.get("id")
+                    if order_id:
+                        supabase.table("orders").delete().eq("chat_id", chat_id).eq("id", order_id).execute()
+                        send_reply(reply_token, [build_carousel(chat_id)])
                 continue
 
+            # --- HANDLE TEXT MESSAGES ---
             if event.get("type") == "message" and event["message"].get("type") == "text":
                 text = event["message"]["text"].strip()
-                source = event.get("source", {})
-                chat_type = source.get("type", "user")
-                if chat_type == "group": chat_id = source.get("groupId")
-                elif chat_type == "room": chat_id = source.get("roomId")
-                else: chat_id = source.get("userId", "user")
-                
-                reply_token = event.get("replyToken", "")
-                
-                if text in ["คู่มือ", "ช่วยเหลือ", "help"]:
-                    send_reply(reply_token, [{"type": "text", "text": "คู่มือการใช้งาน...\n1. พิมพ์ชื่อร้านและรายการสินค้า\n2. ใส่สถานะต่อท้ายได้ทั้งไทยและอังกฤษ เช่น order, slip"}])
+
+                if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
+                    send_reply(reply_token, [{
+                        "type": "text",
+                        "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [วันที่] [ชื่อร้าน] [สินค้า จำนวน] [สถานะ]\nตัวอย่าง: 19 แซ่บยโส L2 R1 order\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+                    }])
                     continue
-                
-                if text in ["สรุป", "รายงาน"]:
+
+                if text in ["สรุป", "รายงาน", "ออเดอร์", "ดูยอด"]:
                     send_reply(reply_token, [build_carousel(chat_id)])
                     continue
-                
+
                 parsed_list, errors = parse_order_text(text)
+
+                # ถ้าไม่มีรายการออเดอร์ที่ถูกต้องเลย (เช่น พิมพ์ผิด หรือคุยเล่นทั่วไป) -> ไม่ส่งสรุปยอด
+                if not parsed_list:
+                    if errors and any(k in text.lower() for k in ALIAS_MAP.keys()):
+                        send_reply(reply_token, [{"type": "text", "text": "⚠️ รูปแบบไม่ถูกต้อง:\n" + "\n".join(errors)}])
+                    continue
+
+                # บันทึกออเดอร์ใหม่ลงฐานข้อมูล
+                inserted_count = 0
                 for entry in parsed_list:
                     shop = get_or_create_shop(entry["shop_name"])
                     if shop:
                         payload = {
-                            "chat_id": chat_id, "chat_type": chat_type, "shop_id": shop["id"],
-                            "ddate": entry["ddate"], "status": entry["status"]
+                            "chat_id": chat_id,
+                            "chat_type": chat_type,
+                            "shop_id": shop["id"],
+                            "ddate": entry["ddate"],
+                            "status": entry["status"]
                         }
-                        for k, v in entry["items"].items(): payload[k] = v
+                        for k, v in entry["items"].items():
+                            payload[k] = v
                         supabase.table("orders").insert(payload).execute()
-                
-                msg_objs = []
-                if errors:
-                    msg_objs.append({"type": "text", "text": "⚠️ แจ้งเตือน:\n" + "\n".join(errors)})
-                msg_objs.append(build_carousel(chat_id))
-                send_reply(reply_token, msg_objs)
+                        inserted_count += 1
+
+                # ส่งสรุปยอดต่อเมื่อมีออเดอร์ใหม่บันทึกสำเร็จเท่านั้น
+                if inserted_count > 0:
+                    msg_objs = []
+                    if errors:
+                        msg_objs.append({"type": "text", "text": "⚠️ บางบรรทัดไม่ถูกต้อง:\n" + "\n".join(errors)})
+                    msg_objs.append(build_carousel(chat_id))
+                    send_reply(reply_token, msg_objs)
+
     except Exception as e:
         print(f"Callback Error: {e}")
     return "OK", 200
@@ -417,7 +507,11 @@ def send_reply(reply_token, messages):
         return
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}
     try:
-        requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json={"replyToken": reply_token, "messages": messages})
+        requests.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers=headers,
+            json={"replyToken": reply_token, "messages": messages}
+        )
     except Exception as e:
         print(f"Reply Error: {e}")
 
