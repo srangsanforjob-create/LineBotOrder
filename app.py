@@ -70,7 +70,6 @@ ALIAS_MAP = {
     "sojustrawberry": "sojs", "sojs": "sojs"
 }
 
-# --- STATUSES ---
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
     "ordered": ("✅", "Order แล้ว", "#06C755"),
@@ -231,7 +230,7 @@ def callback():
             if event.get("type") == "message":
                 handle_message(event)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Callback Error: {e}")
 
     return "OK", 200
 
@@ -242,12 +241,19 @@ def handle_message(event):
     text = msg.get("text", "").strip()
     reply_token = event["replyToken"]
 
+    print(f"📥 Received Text: {text}")
+
     if text == "สรุป":
         res_obj = build_summary_carousel()
         send_reply(reply_token, res_obj)
         return
 
-    # รูปแบบคำสั่งพิมพ์ออเดอร์ เช่น: 17 เจ๊โน galf 2
+    if text == "ดูรหัส":
+        product_list = "\n".join([f"- {k}: {v}" for k, v in PRODUCTS_DB.items()])
+        send_reply(reply_token, {"type": "text", "text": f"📋 รหัสสินค้าทั้งหมด:\n{product_list}"})
+        return
+
+    # รูปแบบคำสั่งออเดอร์ เช่น: 17 เจ๊โน galf 2
     parts = text.split()
     if len(parts) >= 3 and parts[0].isdigit():
         d_val = int(parts[0])
@@ -256,7 +262,13 @@ def handle_message(event):
         raw_product = parts[2].lower()
         qty = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 1
 
+        print(f"🛒 Parsed Order -> Date: {resolved_dt}, Shop: {shop_name}, Product: {raw_product}, Qty: {qty}")
+
         shop = get_or_create_shop(shop_name)
+        if not shop:
+            send_reply(reply_token, {"type": "text", "text": f"❌ ไม่สามารถสร้างหรือหาร้าน '{shop_name}' ในระบบได้"})
+            return
+            
         shop_id = shop["id"]
 
         # ตรวจสอบวงเงินเครดิต
@@ -271,29 +283,42 @@ def handle_message(event):
             })
             return
 
-        code = ALIAS_MAP.get(raw_product, "galf")
+        code = ALIAS_MAP.get(raw_product)
+        if not code:
+            send_reply(reply_token, {
+                "type": "text", 
+                "text": f"❌ ไม่พบรหัสสินค้า '{raw_product}' พิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าทั้งหมดครับ"
+            })
+            return
 
         # บันทึกหรืออัปเดตข้อมูลลง Supabase
         _, current_orders = fetch_fresh_data()
         existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
         
-        if existing:
-            oid = existing["id"]
-            curr_q = num(existing.get(code, 0))
-            supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
-        else:
-            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
-            supabase.table("orders").insert(payload).execute()
+        try:
+            if existing:
+                oid = existing["id"]
+                curr_q = num(existing.get(code, 0))
+                supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
+            else:
+                payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
+                supabase.table("orders").insert(payload).execute()
 
-        # อัปเดตยอดเงินสะสมของร้านใน Supabase
-        supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
+            # อัปเดตยอดเงินสะสมของร้านใน Supabase
+            supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
+            print("✅ Order Saved & Balance Updated Successfully")
+
+        except Exception as db_err:
+            print(f"❌ Supabase Write Error: {db_err}")
+            send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการบันทึกข้อมูลลงฐานข้อมูล: {db_err}"})
+            return
 
         # ตอบกลับด้วยการ์ดสรุปผลทันที
         res_obj = build_summary_carousel()
         send_reply(reply_token, res_obj)
         return
 
-    send_reply(reply_token, {"type": "text", "text": f"พิมพ์ 'สรุป' หรือสั่งออเดอร์ เช่น '17 เจ๊โน galaxyแบน 2'"})
+    send_reply(reply_token, {"type": "text", "text": "💡 คำสั่งที่ไม่รู้จัก\n- พิมพ์ 'สรุป' เพื่อดูยอดออเดอร์\n- พิมพ์ 'ดูรหัส' เพื่อดูรหัสสินค้า\n- หรือสั่งออเดอร์เช่น '17 เจ๊โน galf 2'"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
