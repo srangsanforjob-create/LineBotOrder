@@ -67,6 +67,7 @@ STATUSES = {
     "slip": ("👍", "อัปสลิปแล้ว", "#00B900"),
     "credit": ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"),
     "overdue": ("🚨", "เลยกำหนดชำระ / Overdue", "#FF334B"),
+    "insufficient_credit": ("⚠️", "วงเงินไม่พอ", "#FF334B")
 }
 
 def num(v):
@@ -161,8 +162,8 @@ def build_summary_carousel():
         for idx, o in enumerate(date_orders):
             sh = shop_by_id(o["shop_id"])
             shop_name = sh["name"] if sh else "ร้านค้า"
-            status_key = o.get("status", "pending")
-            icon, label, color = STATUSES.get(status_key, ("⏳", "Pending", "#FF9900"))
+            status_key = o.get("status", "credit")
+            icon, label, color = STATUSES.get(status_key, ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"))
 
             item_rows = []
             for code in CODES:
@@ -299,17 +300,6 @@ def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
         
     shop_id = shop["id"]
 
-    credit_limit = num(shop.get("credit_limit", 50000))
-    current_balance = num(shop.get("current_balance", 0))
-    estimated_cost = qty * 500  
-    
-    if current_balance + estimated_cost > credit_limit:
-        send_reply(reply_token, {
-            "type": "text", 
-            "text": f"⚠️ ขออภัยครับ วงเงินร้าน {shop_name} ไม่พอสำหรับการสั่งซื้อนี้!\n(วงเงินจำกัด: {credit_limit:,.2f} ฿, ยอดใช้ไป: {current_balance:,.2f} ฿)"
-        })
-        return
-
     code = ALIAS_MAP.get(raw_product)
     if not code:
         send_reply(reply_token, {
@@ -329,8 +319,6 @@ def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
         else:
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
             supabase.table("orders").insert(payload).execute()
-
-        supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
 
     except Exception as db_err:
         print(f"❌ DB Error: {db_err}")
