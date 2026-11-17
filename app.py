@@ -124,25 +124,7 @@ def fetch_fresh_data(chat_id, target_date=None):
         return [], []
 
 def get_or_create_shop(chat_id, name):
-    shops, _ = fetch_fresh_data(chat_id)
-    clean_input = name.strip().lower()
-    input_key = re.sub(r'^(ร้าน\s*)+', '', clean_input).strip()
-
-    best_match = None
-    for s in shops:
-        s_name = s["name"].strip().lower()
-        s_key = re.sub(r'^(ร้าน\s*)+', '', s_name).strip()
-        
-        if s_name == clean_input or s_name == f"ร้าน {clean_input}" or s_key == input_key:
-            return s
-        
-        if input_key in s_key or s_key in input_key:
-            if not best_match or len(s_key) >= len(re.sub(r'^(ร้าน\s*)+', '', best_match["name"]).strip()):
-                best_match = s
-
-    if best_match:
-        return best_match
-
+    """สร้างร้านใหม่ทันทีโดยใช้ชื่อที่พิมพ์มาโดยไม่ค้นหาของเก่า"""
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
@@ -277,34 +259,20 @@ def parse_order_lines(raw_text):
             errors.append(f"❌ ไม่พบข้อมูลสินค้าในบรรทัด: '{line}'")
             continue
 
-        has_valid_product = False
-        for t_check in tokens[idx:]:
-            p_check, _ = split_product_qty(t_check)
+        # ค้นหาจุดเริ่มต้นของสินค้า (คำแรกที่ตรงกับ SKU หรือ Alias)
+        product_start_idx = idx
+        while product_start_idx < len(tokens):
+            p_check, _ = split_product_qty(tokens[product_start_idx])
             if find_matching_skus(p_check):
-                has_valid_product = True
                 break
+            product_start_idx += 1
 
-        if not has_valid_product:
-            errors.append(f"❌ ไม่พบสินค้าในระบบสำหรับบรรทัด: '{line}'")
+        if product_start_idx >= len(tokens) or product_start_idx == idx:
+            errors.append(f"❌ ไม่พบชื่อร้านหรือสินค้าในบรรทัด: '{line}'")
             continue
 
-        shop_tokens = []
-        while idx < len(tokens):
-            p_name, _ = split_product_qty(tokens[idx])
-            if find_matching_skus(p_name):
-                break
-            shop_tokens.append(tokens[idx])
-            idx += 1
-
-        if not shop_tokens:
-            errors.append(f"❌ ไม่พบชื่อร้านในบรรทัด: '{line}'")
-            continue
-
-        shop_name = "".join(shop_tokens) if len(shop_tokens) == 1 else " ".join(shop_tokens)
-
-        if idx >= len(tokens):
-            errors.append(f"❌ ร้าน '{shop_name}' ยังไม่ได้ระบุรายการสินค้า")
-            continue
+        shop_name = " ".join(tokens[idx:product_start_idx])
+        idx = product_start_idx
 
         items = {}
         while idx < len(tokens):
@@ -746,9 +714,7 @@ def handle_postback(event, default_chat_id):
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
-            # 1. ลบข้อมูลใน Supabase ออก
             supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
-            # 2. ส่งข้อความธรรมดาไปแทนที่ เพื่อให้ Flex Message การ์ดสรุปหายไปทันที
             send_reply(reply_token, {"type": "text", "text": f"🗑️ ยกเลิกและลบออเดอร์ทั้งหมดของวันที่ {dmy(target_date)} เรียบร้อยแล้วครับ"})
             return
             
