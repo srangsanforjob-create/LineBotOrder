@@ -17,7 +17,6 @@ from supabase import create_client, Client
 SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
-# ตั้งค่าเชื่อมต่อ Supabase
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -25,63 +24,73 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TZ = ZoneInfo("Asia/Bangkok")
 
 PRODUCT_CATEGORIES = {
-    "Beer": {"L": "Lager", "R": "Rose", "D": "Dunkel"},
-    "Amenity": {"M": "MUG", "P": "PINE", "J": "JUG", "T": "TOWER"},
+    "Beer": {"l": "Lager", "r": "Rose", "d": "Dunkel"},
+    "Amenity": {"m": "MUG", "p": "PINE", "j": "JUG", "t": "TOWER"},
     "อุปกรณ์ติดตั้ง": {
-        "H40L": "Hoshizaki 40L",
-        "H90": "Hoshizaki 90L",
-        "H120": "Hoshizaki 120L",
-        "SCT": "Stanless Counter",
-        "ST": "Stanless Table"
+        "h40l": "Hoshizaki 40L",
+        "h90": "Hoshizaki 90L",
+        "h120": "Hoshizaki 120L",
+        "sct": "Stanless Counter",
+        "st": "Stanless Table"
     },
-    "POSM": {"AST": "A-Stand", "STD": "Standee", "AA5": "อะคริลิก A5", "AA6": "อะคริลิก A6"},
+    "POSM": {"ast": "A-Stand", "std": "Standee", "aa5": "อะคริลิก A5", "aa6": "อะคริลิก A6"},
     "OtherALC": {
-        "GALF": "Galaxy แบน 350ml",
-        "GALR": "Galaxy กลม 700ml",
-        "TEND3": "Tendo 360ml",
-        "TEND7": "Tendo 700ml",
-        "KACH": "Kacha 375ml",
-        "SOJY": "Soju โยเกิร์ต",
-        "SOJP": "Soju พีช",
-        "SOJG": "Soju องุ่น",
-        "SOJF": "Soju เกรปฟรุ๊ต",
-        "SOJS": "Soju สตรอเบอรี่"
+        "galf": "Galaxy แบน 350ml",
+        "galr": "Galaxy กลม 700ml",
+        "tend3": "Tendo 360ml",
+        "tend7": "Tendo 700ml",
+        "kach": "Kacha 375ml",
+        "sojy": "Soju โยเกิร์ต",
+        "sojp": "Soju พีช",
+        "sojg": "Soju องุ่น",
+        "sojf": "Soju เกรปฟรุ๊ต",
+        "sojs": "Soju สตรอเบอรี่"
     },
     "SupportAll": {
-        "supL": "sup Lager",
-        "supR": "sup Rose",
-        "supD": "sup Dunkel",
-        "supM": "sup MUG",
-        "supP": "sup PINE",
-        "supJ": "sup JUG",
-        "supT": "sup TOWER",
-        "supH40L": "sup Hoshizaki 40L",
-        "supH90": "sup Hoshizaki 90L",
-        "supH120": "sup Hoshizaki 120L",
-        "supSCT": "sup Stanless Counter",
-        "supST": "sup Stanless Table",
-        "supAST": "sup A-Stand",
-        "supSTD": "sup Standee",
-        "supAA5": "sup อะคริลิก A5",
-        "supAA6": "sup อะคริลิก A6",
-        "supGALF": "sup Galaxy แบน 350ml",
-        "supGALR": "sup Galaxy กลม 700ml",
-        "supTEND3": "sup Tendo 360ml",
-        "supTEND7": "sup Tendo 700ml",
-        "supKACH": "sup Kacha 375ml",
-        "supSOJY": "sup Soju โยเกิร์ต",
-        "supSOJP": "sup Soju พีช",
-        "supSOJG": "sup Soju องุ่น",
-        "supSOJF": "sup Soju เกรปฟรุ๊ต",
-        "supSOJS": "sup Soju สตรอเบอรี่"
+        "supl": "sup Lager",
+        "supr": "sup Rose",
+        "supd": "sup Dunkel",
+        "supm": "sup MUG",
+        "supp": "sup PINE",
+        "supj": "sup JUG",
+        "supt": "sup TOWER",
+        "suph40l": "sup Hoshizaki 40L",
+        "suph90": "sup Hoshizaki 90L",
+        "suph120": "sup Hoshizaki 120L",
+        "supsct": "sup Stanless Counter",
+        "supst": "sup Stanless Table",
+        "supast": "sup A-Stand",
+        "supstd": "sup Standee",
+        "supaa5": "sup อะคริลิก A5",
+        "supaa6": "sup อะคริลิก A6",
+        "supgalf": "sup Galaxy แบน 350ml",
+        "supgalr": "sup Galaxy กลม 700ml",
+        "suptend3": "sup Tendo 360ml",
+        "suptend7": "sup Tendo 700ml",
+        "supkach": "sup Kacha 375ml",
+        "supsojy": "sup Soju โยเกิร์ต",
+        "supsojp": "sup Soju พีช",
+        "supsojg": "sup Soju องุ่น",
+        "supsojf": "sup Soju เกรปฟรุ๊ต",
+        "supsojs": "sup Soju สตรอเบอรี่"
     }
 }
 
 EXTRA_ALIASES = {
-    "H40": "H40L",
-    "COUNTER": "SCT",
-    "TABLE": "ST",
-    "CELLI": "H40L"
+    "h40": "h40l",
+    "counter": "sct",
+    "table": "st",
+    "celli": "h40l",
+    "L": "l", "R": "r", "D": "d", "M": "m", "P": "p", "J": "j", "T": "t",
+    "H40L": "h40l", "H90": "h90", "H120": "h120", "SCT": "sct", "ST": "st",
+    "AST": "ast", "STD": "std", "AA5": "aa5", "AA6": "aa6",
+    "GALF": "galf", "GALR": "galr", "TEND3": "tend3", "TEND7": "tend7",
+    "KACH": "kach", "SOJY": "sojy", "SOJP": "sojp", "SOJG": "sojg", "SOJF": "sojf", "SOJS": "sojs",
+    "supL": "supl", "supR": "supr", "supD": "supd", "supM": "supm", "supP": "supp", "supJ": "supj", "supT": "supt",
+    "supH40L": "suph40l", "supH90": "suph90", "supH120": "suph120", "supSCT": "supsct", "supST": "supst",
+    "supAST": "supast", "supSTD": "supstd", "supAA5": "supaa5", "supAA6": "supaa6",
+    "supGALF": "supgalf", "supGALR": "supgalr", "supTEND3": "suptend3", "supTEND7": "suptend7",
+    "supKACH": "supkach", "supSOJY": "supsojy", "supSOJP": "supsojp", "supSOJG": "supsojg", "supSOJF": "supsojf", "supSOJS": "supsojs"
 }
 
 PRODUCT_CODES = {}
@@ -207,7 +216,6 @@ def resolve_date(day_val, month_val=None, year_val=None):
             d = date(t.year, month_val, day_val)
             return d.isoformat() if d >= t else date(t.year + 1, month_val, day_val).isoformat()
         
-        # ถ้าระบุแค่วันที่อย่างเดียว ให้ยึดเดือนและปีปัจจุบันเป็นหลัก
         return date(t.year, t.month, day_val).isoformat()
     except ValueError:
         return None
@@ -228,8 +236,6 @@ def today():
     return datetime.now(TZ).date()
 
 
-# ---------- FLEX MESSAGE: สรุปใบออเดอร์เดี่ยว ----------
-
 def flex_order_summary(order_record, shop_name):
     status_key = order_record.get("status", "pending")
     icon, status_label, status_color = STATUSES.get(status_key, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
@@ -244,7 +250,7 @@ def flex_order_summary(order_record, shop_name):
                 "type": "box",
                 "layout": "horizontal",
                 "contents": [
-                    {"type": "text", "text": f"• {p_name} ({code})", "size": "sm", "color": "#333333", "flex": 4},
+                    {"type": "text", "text": f"• {p_name} ({code.upper()})", "size": "sm", "color": "#333333", "flex": 4},
                     {"type": "text", "text": str(qty), "size": "sm", "align": "end", "weight": "bold", "color": "#111111", "flex": 1}
                 ]
             })
@@ -339,15 +345,11 @@ def flex_order_summary(order_record, shop_name):
     return {"type": "flex", "altText": f"ใบสรุปออเดอร์ {shop_name}", "contents": bubble}
 
 
-# ---------- FLEX MESSAGE: สรุปภาพรวมรายวัน (Carousel หลายออเดอร์ในวันนั้น) ----------
-
 def flex_daily_summary(target_date_str, orders_list):
     bubbles = []
-    
     for ord_rec in orders_list:
         sh = shop_by_id(ord_rec["shop_id"])
         sh_name = sh["name"] if sh else "ร้านค้า"
-        
         status_key = ord_rec.get("status", "pending")
         icon, status_label, status_color = STATUSES.get(status_key, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
         order_id = ord_rec.get("id")
@@ -361,7 +363,7 @@ def flex_daily_summary(target_date_str, orders_list):
                     "type": "box",
                     "layout": "horizontal",
                     "contents": [
-                        {"type": "text", "text": f"• {p_name} ({code})", "size": "sm", "color": "#333333", "flex": 4},
+                        {"type": "text", "text": f"• {p_name} ({code.upper()})", "size": "sm", "color": "#333333", "flex": 4},
                         {"type": "text", "text": str(qty), "size": "sm", "align": "end", "weight": "bold", "color": "#111111", "flex": 1}
                     ]
                 })
@@ -442,13 +444,10 @@ def flex_daily_summary(target_date_str, orders_list):
     }
 
 
-# ---------- LINE WEBHOOK ROUTE ----------
-
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
-    
     try:
         if SECRET:
             hash = hmac.new(SECRET.encode('utf-8'), body.encode('utf-8'), hashlib.sha256).digest()
@@ -486,7 +485,6 @@ def handle_message(event):
         reply_text(event["replyToken"], help_text)
         return
 
-    # เช็คคำสั่ง "สรุป dd/mm/yy" หรือ "สรุป d"
     if msg_text.startswith("สรุป"):
         parts = msg_text.split()
         if len(parts) >= 2:
@@ -496,10 +494,8 @@ def handle_message(event):
                 d_val = int(date_match.group(1))
                 m_val = int(date_match.group(2)) if date_match.group(2) else None
                 y_val = int(date_match.group(3)) if date_match.group(3) else None
-                
                 resolved_dt = resolve_date(d_val, m_val, y_val)
                 if resolved_dt:
-                    # ค้นหาออเดอร์ทั้งหมดในวันที่ตรงกัน
                     matched_orders = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
                     if matched_orders:
                         reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched_orders))
@@ -508,7 +504,6 @@ def handle_message(event):
                         reply_text(event["replyToken"], f"📅 ไม่พบออเดอร์ในวันที่ {dmy(resolved_dt)} ครับ")
                         return
 
-    # ประมวลผลข้อความสั่งซื้อปกติ
     parts = msg_text.split()
     if len(parts) >= 3:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{2,4}))?$", parts[0])
@@ -516,7 +511,6 @@ def handle_message(event):
             d_val = int(date_match.group(1))
             m_val = int(date_match.group(2)) if date_match.group(2) else None
             y_val = int(date_match.group(3)) if date_match.group(3) else None
-            
             resolved_dt = resolve_date(d_val, m_val, y_val)
             if resolved_dt:
                 shop_name = parts[1]
@@ -533,11 +527,10 @@ def handle_message(event):
                 for token in item_tokens:
                     m_item = re.match(r"^([a-zA-Z0-9_-]+?)(\d+)$", token)
                     if m_item:
-                        code = m_item.group(1)
+                        code_raw = m_item.group(1)
                         qty = int(m_item.group(2))
-                        if code in EXTRA_ALIASES:
-                            code = EXTRA_ALIASES[code]
-                        if code in CODES or code in PRODUCT_CODES:
+                        code = EXTRA_ALIASES.get(code_raw, code_raw).lower()
+                        if code in CODES:
                             order_items[code] = order_items.get(code, 0) + qty
                 
                 if order_items:
@@ -549,7 +542,6 @@ def handle_message(event):
                         **order_items
                     }
                     inserted = add("orders", payload)
-                    
                     sh_obj = shop_by_id(shop_id)
                     sh_display = sh_obj["name"] if sh_obj else shop_name
                     reply_flex(event["replyToken"], flex_order_summary(inserted, sh_display))
@@ -561,13 +553,11 @@ def handle_message(event):
 def handle_postback(event):
     data = event["postback"]["data"]
     parts = data.split("|")
-    
     if len(parts) == 3 and parts[0] == "status":
         new_status = parts[1]
         try:
             order_id = int(parts[2])
             update_db("orders", order_id, {"status": new_status})
-            
             updated_order = next((o for o in DATA["orders"] if o["id"] == order_id), None)
             if updated_order:
                 sh_obj = shop_by_id(updated_order["shop_id"])
