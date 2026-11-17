@@ -132,7 +132,7 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
         
-        status = 'pending'  # Default เป็น pending ถ้าไม่มีคำต่อท้าย
+        status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
             status = STATUS_KEYWORDS[last_word]
@@ -202,7 +202,6 @@ def build_carousel(chat_id):
 
     shop_map = {str(s["id"]): s for s in shops}
     
-    # จัดกลุ่มออเดอร์ตามวันที่ (ddate)
     grouped_by_date = {}
     for order in orders:
         ddate = order.get("ddate", get_bangkok_date_str())
@@ -251,14 +250,13 @@ def build_carousel(chat_id):
                 ]
             })
 
-        # สร้างกล่องรวมยอดสินค้าประจำวันไว้ที่ท้ายบับเบิ้ลของวันนั้นๆ
         summary_rows = []
         for code in CODES:
             tot = daily_totals[code]
             if tot > 0:
                 p_name = PRODUCTS_DB.get(code, code)
                 summary_rows.append({
-                    "type": "horizontal", "layout": "horizontal",
+                    "type": "box", "layout": "horizontal",
                     "contents": [
                         {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#ffffff", "flex": 4},
                         {"type": "text", "text": str(tot), "size": "sm", "align": "end", "weight": "bold", "color": "#ffffff", "flex": 1}
