@@ -469,3 +469,27 @@ def flex_order_actions(order_id):
                     {"type": "text", "text": "เปลี่ยนสถานะ (เฉพาะร้านนี้):", "size": "xs", "weight": "bold", "color": "#888888"},
                     *status_buttons,
                     {"type": "separator", "margin": "md"},
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "height": "sm",
+                                "action": {"type": "postback", "label": "✏️ แก้ไข", "data": f"edit_order|{order_id}"}
+                            },
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "color": "#FF3B30",
+                                "height": "sm",
+                                "action": {"type": "postback", "label": "🗑️ ลบ", "data": f"del_order|{order_id}"}
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    }
