@@ -42,7 +42,7 @@ ALIAS_MAP = {
     "rose": "r", "โรส": "r", "โรเซ่": "r", "r": "r",
     "dunkel": "d", "ดุงเกล": "d", "ดังก์เกล": "d", "ดำ": "d", "d": "d",
     # Glasses & Towers
-    "mug": "m", "แก้วมัค": "m", "แก้ว": "m", "m": "m",
+    "mug": "m", "แก้วมัค": "m", "m": "m",
     "pine": "p", "ไพน์": "p", "ไพนต์": "p", "p": "p",
     "jug": "j", "เหยือก": "j", "j": "j",
     "tower": "t", "ทาวเวอร์": "t", "ทาว": "t", "t": "t",
@@ -72,7 +72,6 @@ ALIAS_MAP = {
     "sojustrawberry": "sojs", "โซจูสตรอเบอรี่": "sojs", "โซจสตรอ": "sojs", "สตรอเบอรี่": "sojs", "sojs": "sojs"
 }
 
-# --- AMBIGUOUS GROUPS (คำที่ตรงกับหลาย SKU) ---
 AMBIGUOUS_GROUPS = {
     "soju": ["sojy", "sojp", "sojg", "sojf", "sojs"],
     "โซจู": ["sojy", "sojp", "sojg", "sojf", "sojs"],
@@ -91,13 +90,8 @@ AMBIGUOUS_GROUPS = {
     "สแตนเลส": ["sct", "st"],
     "stainless": ["sct", "st"],
     "เบียร์สด": ["l", "r", "d"],
-    "draft": ["l", "r", "d"],
-    "แก้ว": ["m", "p", "j"]
+    "draft": ["l", "r", "d"]
 }
-
-# อัปเดต "แก้ว" ให้ไปที่กลุ่มตัวเลือก (MUG, PINE, JUG) แทนการเดาเป็น MUG ทันที
-if "แก้ว" in ALIAS_MAP:
-    del ALIAS_MAP["แก้ว"]
 
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
@@ -180,15 +174,12 @@ def send_reply(reply_token, messages):
     res = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
     print(f"DEBUG Reply Status: {res.status_code}, Body: {res.text}")
 
-# --- SMART INPUT & DISAMBIGUATION PARSER ---
 def find_matching_skus(term):
-    """ค้นหาว่าคำที่พิมพ์ตรงกับ SKU เดียวหรือหลาย SKU (รองรับทั้งตรงตัวและใกล้เคียง)"""
     t = term.lower().strip()
     if t in AMBIGUOUS_GROUPS:
         return AMBIGUOUS_GROUPS[t]
     if t in ALIAS_MAP:
         return [ALIAS_MAP[t]]
-    # ค้นหาแบบใกล้เคียง (Substring match)
     matched = set()
     for alias, code in ALIAS_MAP.items():
         if len(t) >= 2 and (t in alias or alias in t):
@@ -199,7 +190,6 @@ def find_matching_skus(term):
     return list(matched)
 
 def split_product_qty(token):
-    """แยกชื่อสินค้ากับจำนวนที่พิมพ์ติดกัน เช่น 'โซจู2' -> ('โซจู', 2)"""
     token_clean = token.lower().strip()
     if find_matching_skus(token_clean):
         return token_clean, None
@@ -282,7 +272,6 @@ def parse_order_lines(raw_text):
                 code = matched_codes[0]
                 items[code] = items.get(code, 0) + qty
             else:
-                # พบหลาย SKU ที่ตรงกัน -> เก็บเข้าคิวสร้าง Flex Message ให้เลือก
                 ambiguous_requests.append({
                     "ddate": line_date,
                     "shop_name": shop_name,
@@ -301,7 +290,6 @@ def parse_order_lines(raw_text):
     return parsed_orders, ambiguous_requests, errors
 
 def build_disambiguation_flex(ambiguous_list):
-    """สร้างการ์ด Flex Message ให้ผู้ใช้กดเลือก SKU ที่ต้องการ"""
     bubbles = []
     for req in ambiguous_list[:10]:
         shop_obj = get_or_create_shop(req["shop_name"])
@@ -359,16 +347,16 @@ def build_disambiguation_flex(ambiguous_list):
     }
 
 def upsert_order_items(shop_id, resolved_dt, items_dict):
-    """บันทึกหรืออัปเดตรายการสินค้าลงตาราง orders"""
+    """ดึงข้อมูลเดิมมาบวกเพิ่มจำนวน (Delta) อย่างถูกต้อง ไม่ทับซ้อน"""
     _, current_orders = fetch_fresh_data()
     existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
 
     if existing:
         oid = existing["id"]
         update_payload = {}
-        for code, delta_qty in items_dict.items():
+        for code, add_qty in items_dict.items():
             curr_q = num(existing.get(code, 0))
-            new_q = max(0, curr_q + delta_qty)
+            new_q = max(0, curr_q + add_qty)  # บวกทบกับยอดเก่าในฐานข้อมูล
             update_payload[code] = new_q
         supabase.table("orders").update(update_payload).eq("id", oid).execute()
     else:
@@ -703,7 +691,6 @@ def handle_message(event):
         send_reply(reply_token, {"type": "text", "text": err_msg})
         return
 
-    # บันทึกรายการที่ชัดเจนทันที
     for order_data in parsed_orders:
         shop = get_or_create_shop(order_data["shop_name"])
         if not shop:
@@ -719,7 +706,6 @@ def handle_message(event):
     if errors:
         messages.append({"type": "text", "text": "⚠️ แจ้งเตือนบางรายการ:\n" + "\n".join(errors)})
 
-    # ถ้ามีรายการที่กำกวม ให้ส่ง Flex Message เลือก SKU (เมื่อกดเลือกแล้วจะเด้งไปหน้าสรุป)
     if ambiguous_requests:
         messages.append(build_disambiguation_flex(ambiguous_requests))
     else:
