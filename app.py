@@ -425,7 +425,7 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
                         
-                    matched = [o for o in DATA["orders"] if o.get("ddate"] == resolved_dt]
+                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
                     reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str, parsed_info_msg=parsed_str))
                     return
 
@@ -439,7 +439,7 @@ def handle_postback(event):
         update_db("orders", order_id, {"status": parts[1]})
         ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
         if ord_rec:
-            matched = [o for o in DATA["orders"] if o.get("ddate"] == ord_rec["ddate"]]
+            matched = [o for o in DATA["orders"] if o.get("ddate") == ord_rec["ddate"]]
             reply_flex(event["replyToken"], flex_daily_summary(ord_rec["ddate"], matched))
     elif len(parts) == 2 and parts[0] == "delete":
         order_id = int(parts[1])
