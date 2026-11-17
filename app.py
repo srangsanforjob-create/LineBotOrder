@@ -36,24 +36,24 @@ PRODUCTS_DB = {
     # Other Alcohol
     "galf": "Galaxy แบน 350ml", "galr": "Galaxy กลม 700ml",
     "tend3": "Tendo 360ml", "tend7": "Tendo 700ml",
-    "kach": "Kacha 375ml", "sojy": "Soju โยเกิร์ต", "sojp": "Soju พีช",
+    "kach": "Kacha 375ml", 
+    "sojy": "Soju โยเกิร์ต", "sojp": "Soju พีช",
     "sojg": "Soju องุ่น", "sojf": "Soju เกรปฟรุ๊ต", "sojs": "Soju สตรอเบอรี่"
 }
 
 ALIAS_MAP = {
-    "lager": "l", "larner": "l",
-    "rose": "r",
-    "dunkel": "d",
+    "lager": "l", "larner": "l", "rose": "r", "dunkel": "d",
     "mug": "m", "pine": "p", "jug": "j", "tower": "t",
     "h40": "h40l", "h40lo": "h40l", "ceili": "h40l",
     "counter": "sct", "table": "st",
     "astand": "ast", "standee": "std",
     "galaxyแบน": "galf", "galf": "galf",
-    "galaxyกลม": "galr", "galr": "galr", "galaxy": "galr", "กาแล็กซี": "galr", "กาแลaxy": "galr",
+    "galaxyกลม": "galr", "galr": "galr", "กาแล็กซี": "galr", "กาแลaxy": "galr",
     "tendo360": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tend7": "tend7",
     "kacha": "kach", "kach": "kach",
-    "soju": "sojy", "โซจู": "sojy"
+    "sojuโยเกิร์ต": "sojy", "sojuพีช": "sojp", "sojuองุ่น": "sojg", "sojuเกรปฟรุ๊ต": "sojf", "sojuสตรอเบอรี่": "sojs",
+    "โซจูโยเกิร์ต": "sojy", "โซจูพีช": "sojp", "โซจูองุ่น": "sojg", "โซจูเกรปฟรุ๊ต": "sojf", "โซจูสตรอเบอรี่": "sojs"
 }
 
 CODES = list(PRODUCTS_DB.keys())
@@ -99,9 +99,6 @@ def load():
         DATA["pending"] = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (pending_res.data or [])]
     except Exception as e:
         print(f"❌ Load Error: {e}")
-
-
-INT_COLS = {"id", "shop_id", *CODES}
 
 
 def add(tab, d):
@@ -170,6 +167,12 @@ def match_product_token(token):
         name_part = m.group(1)
         qty = int(m.group(2))
         
+        # ตรวจสอบว่าเป็นคำสั่งกลุ่มกว้างที่ต้องการให้เลือก SKU หรือไม่
+        if name_part in ["galaxy", "กาแล็กซี", "กาแลaxy"]:
+            return ("ambiguous", ["galf", "galr"], qty, name_part)
+        if name_part in ["soju", "โซจู"]:
+            return ("ambiguous", ["sojy", "sojp", "sojg", "sojf", "sojs"], qty, name_part)
+
         alias_code = ALIAS_MAP.get(name_part)
         if alias_code and alias_code in CODES:
             return ("exact", alias_code, qty, None)
@@ -277,6 +280,7 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
+                                {"type": "button", "style": "secondary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขจำนวน", "data": f"edit_menu|{order_id}"}},
                                 {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
                             ]
                         }
@@ -354,6 +358,49 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
     return bubble
 
 
+def flex_edit_menu(order_id):
+    ord_rec = next((o for o in DATA["orders"] if o.get("id") == order_id), None)
+    if not ord_rec:
+        return None
+    
+    sh = shop_by_id(ord_rec["shop_id"])
+    sh_name = sh["name"] if sh else "ร้านค้า"
+    
+    buttons = []
+    for code in CODES:
+        qty = ord_rec.get(code, 0)
+        if qty > 0:
+            p_name = PRODUCTS_DB.get(code, code)
+            buttons.append({
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {
+                    "type": "postback",
+                    "label": f"ลบ/รีเซ็ต: {p_name} (มี {qty})",
+                    "data": f"edit_clear|{order_id}|{code}"
+                }
+            })
+            
+    if not buttons:
+        buttons.append({"type": "text", "text": "ไม่มีสินค้าในออเดอร์นี้", "size": "sm", "color": "#888888"})
+
+    bubble = {
+        "type": "bubble",
+        "size": "kilo",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": f"✏️ แก้ไขออเดอร์: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "sm"},
+                {"type": "text", "text": "เลือกสินค้าที่ต้องการเคลียร์จำนวนออกเป็น 0:", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
+                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
+            ]
+        }
+    }
+    return bubble
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -387,12 +434,12 @@ def handle_message(event):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
             product_list_str += f"• [{code.upper()}] {name}\n"
-        product_list_str += "\n💡 ตัวอย่างการสั่ง: 17 ร้าน ABC l2 r3 galaxy2"
+        product_list_str += "\n💡 ตัวอย่างการสั่ง: 17 ร้าน ABC l2 r3 galaxyแบน 2"
         reply_text(event["replyToken"], product_list_str)
         return
 
     if msg_text.lower() == "ขอinput":
-        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxy 2\n\nพิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้าทั้งหมด")
+        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxyแบน 2\n\nพิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้าทั้งหมด")
         return
 
     if msg_text.startswith("สรุป"):
@@ -457,15 +504,26 @@ def handle_message(event):
 
 def handle_postback(event):
     parts = event["postback"]["data"].split("|")
-    if parts[0] == "status" and len(parts) == 3:
+    action = parts[0]
+    
+    if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
-    elif parts[0] == "delete" and len(parts) == 2:
+    elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
-    elif parts[0] == "select" and len(parts) == 5:
+    elif action == "edit_menu" and len(parts) == 2:
+        order_id = int(parts[1])
+        edit_bubble = flex_edit_menu(order_id)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=edit_bubble))
+    elif action == "edit_clear" and len(parts) == 3:
+        order_id = int(parts[1])
+        code = parts[2]
+        update_db("orders", order_id, {code: 0})
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+    elif action == "select" and len(parts) == 5:
         resolved_dt = parts[1]
         shop_id = int(parts[2])
         code = parts[3]
