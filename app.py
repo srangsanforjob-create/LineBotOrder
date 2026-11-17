@@ -162,6 +162,18 @@ def today(): return datetime.now(TZ).date()
 
 def match_product_token(token):
     clean_token = token.lower()
+    
+    # รองรับกรณีพิมพ์ชื่อกลุ่มกว้างๆ แบบติดกันหรือเว้นวรรค เช่น galaxy3, soju2
+    m_group = re.match(r"^(galaxy|กาแล็กซี|กาแลaxy|soju|โซจู)\s*(\d*)$", clean_token)
+    if m_group:
+        g_name = m_group.group(1)
+        qty_str = m_group.group(2)
+        qty = int(qty_str) if qty_str else 1
+        if g_name in ["galaxy", "กาแล็กซี", "กาแลaxy"]:
+            return ("ambiguous", ["galf", "galr"], qty, g_name)
+        elif g_name in ["soju", "โซจู"]:
+            return ("ambiguous", ["sojy", "sojp", "sojg", "sojf", "sojs"], qty, g_name)
+
     m = re.match(r"^([a-zเ-์]+)\s*(\d+)$", clean_token)
     if m:
         name_part = m.group(1)
