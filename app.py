@@ -64,8 +64,9 @@ VALID_SEARCH_KWORDS = list(PRODUCTS_DB.values()) + list(ALIAS_MAP.keys())
 STATUS_MAP = {
     "order": "ordered", "ordered": "ordered",
     "slipt": "slip", "slip": "slip",
+    "credit": "credit",
     "over": "overdue", "overdue": "overdue",
-    "limit": "short", "short": "short",
+    "limit": "limit", "short": "limit",
     "pending": "pending"
 }
 
@@ -75,7 +76,7 @@ STATUSES = {
     "slip": ("👍", "อัปสลิปแล้ว", "#00B900"),
     "credit": ("💳", "Credit", "#0088CC"),
     "overdue": ("⚠️", "Overdue", "#FF334B"),
-    "short": ("❗", "วงเงินไม่พอ", "#FF334B"),
+    "limit": ("❗", "วงเงินไม่พอ", "#FF334B"),
 }
 
 app = Flask(__name__)
@@ -214,6 +215,7 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
         if not item_rows:
             item_rows.append({"type": "text", "text": "ไม่มีรายการสินค้า", "size": "sm", "color": "#888888"})
 
+        # จัดระเบียบปุ่มสถานะใน Footer ไม่ให้รกหน้าจอ (แบ่งเป็น 2 แถว)
         block = {
             "type": "box",
             "layout": "vertical",
@@ -240,13 +242,38 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
                 {"type": "box", "layout": "vertical", "spacing": "2px", "contents": item_rows},
                 {
                     "type": "box",
-                    "layout": "horizontal",
+                    "layout": "vertical",
                     "spacing": "xs",
                     "margin": "sm",
                     "contents": [
-                        {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ Order", "data": f"status|ordered|{order_id}"}},
-                        {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "👍 Slip", "data": f"status|slip|{order_id}"}},
-                        {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบ", "data": f"delete|{order_id}"}}
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "xs",
+                            "contents": [
+                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "⏳ Pending", "data": f"status|pending|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ Order", "data": f"status|ordered|{order_id}"}},
+                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "👍 Slip", "data": f"status|slip|{order_id}"}}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "xs",
+                            "contents": [
+                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "💳 Credit", "data": f"status|credit|{order_id}"}},
+                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "⚠️ Overdue", "data": f"status|overdue|{order_id}"}},
+                                {"type": "button", "style": "secondary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "❗ วงเงินไม่พอ", "data": f"status|limit|{order_id}"}}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "spacing": "xs",
+                            "contents": [
+                                {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
+                            ]
+                        }
                     ]
                 }
             ]
@@ -262,7 +289,7 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
             "paddingAll": "md",
             "backgroundColor": "#E8F5E9",
             "contents": [
-                {"type": "text", "text": "📦 รายการที่จับคู่ได้:", "size": "xs", "color": "#2E7D32", "weight": "bold"},
+                {"type": "text", "text": "📦 รายการที่อัปเดต/บันทึก:", "size": "xs", "color": "#2E7D32", "weight": "bold"},
                 {"type": "text", "text": parsed_info_msg, "size": "sm", "color": "#333333", "wrap": True}
             ]
         })
@@ -325,7 +352,6 @@ def callback():
 def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     
-    # 1. คำสั่งเรียกดูรายการสินค้าทั้งหมด
     if any(k in msg_text.lower() for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
@@ -359,6 +385,7 @@ def handle_message(event):
                 shop_name = parts[1]
                 tokens = parts[2:]
                 
+                # ดีฟอลต์สถานะเป็น pending เสมอหากไม่ได้ระบุ
                 status_key = "pending"
                 if tokens and tokens[-1].lower() in STATUS_MAP:
                     status_key = STATUS_MAP[tokens[-1].lower()]
@@ -373,7 +400,7 @@ def handle_message(event):
                     if code:
                         order_items[code] = order_items.get(code, 0) + qty
                         prod_full_name = PRODUCTS_DB.get(code, code)
-                        parsed_details.append(f"• {prod_full_name} ({code.upper()}): {qty} หน่วย")
+                        parsed_details.append(f"• {prod_full_name} ({code.upper()}): +{qty}")
                         if matched:
                             suggestion_parts.append(f"คำว่า '{orig_word}' -> ถูกตีความให้เป็น '{target_name}'")
                 
@@ -382,8 +409,25 @@ def handle_message(event):
 
                 if order_items:
                     shop_id = get_or_create_shop(shop_name)
-                    payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
-                    add("orders", payload)
+                    
+                    # เช็คว่ามีออเดอร์ของร้านนี้ในวันเดียวกันอยู่แล้วหรือไม่ (เพื่อบวกเพิ่มหรือแก้ไขออเดอร์เดิม)
+                    existing_order = next((o for o in DATA["orders"] if o["shop_id"] == shop_id and o.get("ddate") == resolved_dt), None)
+                    
+                    if existing_order:
+                        oid = existing_order["id"]
+                        update_payload = {}
+                        for c in CODES:
+                            current_qty = existing_order.get(c, 0)
+                            added_qty = order_items.get(c, 0)
+                            if added_qty > 0:
+                                update_payload[c] = current_qty + added_qty
+                        
+                        if update_payload:
+                            update_db("orders", oid, update_payload)
+                    else:
+                        payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
+                        add("orders", payload)
+                        
                     matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
                     reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str, parsed_info_msg=parsed_str))
                     return
@@ -398,7 +442,7 @@ def handle_postback(event):
         update_db("orders", order_id, {"status": parts[1]})
         ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
         if ord_rec:
-            matched = [o for o in DATA["orders"] if o.get("ddate") == ord_rec["ddate"]]
+            matched = [o for o in DATA["orders"] if o.get("ddate"] == ord_rec["ddate"]]
             reply_flex(event["replyToken"], flex_daily_summary(ord_rec["ddate"], matched))
     elif len(parts) == 2 and parts[0] == "delete":
         order_id = int(parts[1])
@@ -406,7 +450,7 @@ def handle_postback(event):
         dd = ord_rec["ddate"] if ord_rec else None
         delete_db("orders", order_id)
         if dd:
-            matched = [o for o in DATA["orders"] if o.get("ddate") == dd]
+            matched = [o for o in DATA["orders"] if o.get("ddate"] == dd]
             if matched:
                 reply_flex(event["replyToken"], flex_daily_summary(dd, matched))
                 return
