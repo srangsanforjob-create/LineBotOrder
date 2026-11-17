@@ -210,7 +210,6 @@ def resolve_date(day_val, month_val=None, year_val=None):
         if month_val:
             d = date(t.year, month_val, day_val)
             return d.isoformat() if d >= t else date(t.year + 1, month_val, day_val).isoformat()
-        # ถ้าระบุแค่วัน ให้ใช้เดือนและปีปัจจุบัน
         return date(t.year, t.month, day_val).isoformat()
     except Exception:
         return None
@@ -793,33 +792,20 @@ def handle_message(event):
     if event["message"].get("type") != "text":
         return
     msg_text = event["message"].get("text", "").strip()
-
-    if any(k in msg_text.lower() for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
-        product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
-        for code, name in PRODUCTS_DB.items():
-            product_list_str += f"• [{code.upper()}] {name}\n"
-        product_list_str += "\n💡 ตัวอย่าง: 18 ข้าวใหม่ galaxyแบน 2"
-        reply_text(event["replyToken"], product_list_str)
-        return
-
-    if msg_text.lower() == "ขอinput":
-        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
-        return
-
-    # ตรวจสอบคำสั่ง "สรุป" หรือพิมพ์แค่วันที่เพื่อดูสรุป
     msg_lower = msg_text.lower()
+
+    # 1. จัดการคำสั่ง "สรุป" แบบไม่มีตัวเลข (สรุปเดือนปัจจุบัน)
     if msg_lower == "สรุป":
-        # สรุปเดือนปัจจุบัน
         t = today()
         m_data = get_month_filtered_days_data(t.month, t.year)
         reply_flex(event["replyToken"], flex_carousel_summary(m_data))
         return
 
-    # ตรวจสอบกรณีพิมพ์คำว่า "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์แค่วันที่เดี่ยวๆ เช่น "17" หรือ "17/12"
+    # 2. จัดการคำสั่ง "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์แค่วันที่เดี่ยวๆ เช่น "17" หรือ "17/12"
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
     date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
     
-    if date_match and len(msg_text.split()) == 1 and not any(k in msg_text for k in ["ร้าน", "ออเดอร์", "กลม", "แบน", "l", "r", "d"]):
+    if date_match and len(msg_text.split()) <= 2 and not any(k in msg_text for k in ["ร้าน", "ออเดอร์", "กลม", "แบน", "l", "r", "d"]):
         d_val = int(date_match.group(1))
         m_val = int(date_match.group(2)) if date_match.group(2) else None
         y_val = int(date_match.group(3)) if date_match.group(3) else None
@@ -830,7 +816,20 @@ def handle_message(event):
             reply_flex(event["replyToken"], flex_carousel_summary(day_data))
             return
 
-    # กรณีบันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
+    # 3. คำสั่งขอรายการสินค้า
+    if any(k in msg_lower for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
+        product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
+        for code, name in PRODUCTS_DB.items():
+            product_list_str += f"• [{code.upper()}] {name}\n"
+        product_list_str += "\n💡 ตัวอย่าง: 18 ข้าวใหม่ galaxyแบน 2"
+        reply_text(event["replyToken"], product_list_str)
+        return
+
+    if msg_lower == "ขอinput":
+        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
+        return
+
+    # 4. บันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
@@ -877,7 +876,6 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
 
-                    # ส่งสรุปของเดือนปัจจุบันเมื่อมีการเพิ่มออเดอร์
                     t = today()
                     reply_flex(event["replyToken"], flex_carousel_summary(get_month_filtered_days_data(t.month, t.year)))
                     return
