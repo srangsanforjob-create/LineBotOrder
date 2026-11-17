@@ -123,8 +123,8 @@ def fetch_fresh_data(chat_id, target_date=None):
         print(f"❌ DB Fetch Error: {e}")
         return [], []
 
-def get_or_create_shop(chat_id, name):
-    """สร้างร้านใหม่ทันทีโดยใช้ชื่อที่พิมพ์มาโดยไม่ค้นหาของเก่า"""
+def create_new_shop(name):
+    """สร้างร้านใหม่ทันทีโดยไม่ค้นหาของเก่า"""
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
@@ -259,16 +259,19 @@ def parse_order_lines(raw_text):
             errors.append(f"❌ ไม่พบข้อมูลสินค้าในบรรทัด: '{line}'")
             continue
 
-        # ค้นหาจุดเริ่มต้นของสินค้า (คำแรกที่ตรงกับ SKU หรือ Alias)
         product_start_idx = idx
         while product_start_idx < len(tokens):
-            p_check, _ = split_product_qty(tokens[product_start_idx])
-            if find_matching_skus(p_check):
+            raw_tok = tokens[product_start_idx]
+            sub_m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", raw_tok)
+            p_check = sub_m.group(1) if sub_m else raw_tok
+            
+            matched = find_matching_skus(p_check)
+            if matched:
                 break
             product_start_idx += 1
 
         if product_start_idx >= len(tokens) or product_start_idx == idx:
-            errors.append(f"❌ ไม่พบชื่อร้านหรือสินค้าในบรรทัด: '{line}'")
+            errors.append(f"❌ ไม่พบสินค้าในระบบสำหรับบรรทัด: '{line}'")
             continue
 
         shop_name = " ".join(tokens[idx:product_start_idx])
@@ -333,7 +336,7 @@ def parse_order_lines(raw_text):
 def build_disambiguation_flex(chat_id, ambiguous_list):
     bubbles = []
     for req in ambiguous_list[:10]:
-        shop_obj = get_or_create_shop(chat_id, req["shop_name"])
+        shop_obj = create_new_shop(req["shop_name"])
         shop_id = shop_obj["id"] if shop_obj else ""
         shop_display = shop_obj["name"] if shop_obj else req["shop_name"]
         ddate = req["ddate"]
@@ -388,35 +391,20 @@ def build_disambiguation_flex(chat_id, ambiguous_list):
         }
     }
 
-def upsert_order_items(chat_id, chat_type, shop_id, resolved_dt, items_dict, forced_status=None):
-    _, current_orders = fetch_fresh_data(chat_id)
-    existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
-
-    if existing:
-        oid = existing["id"]
-        update_payload = {}
-        for code, add_qty in items_dict.items():
-            curr_q = num(existing.get(code, 0))
-            new_q = max(0, curr_q + add_qty)
-            update_payload[code] = new_q
-        
-        if forced_status:
-            update_payload["status"] = forced_status
-            
-        supabase.table("orders").update(update_payload).eq("id", oid).execute()
-    else:
-        insert_payload = {
-            "chat_id": chat_id,
-            "chat_type": chat_type,
-            "shop_id": shop_id, 
-            "ddate": resolved_dt, 
-            "status": forced_status if forced_status else "credit"
-        }
-        for code, qty in items_dict.items():
-            if qty > 0:
-                insert_payload[code] = qty
-        if len(insert_payload) > 5:
-            supabase.table("orders").insert(insert_payload).execute()
+def insert_new_order(chat_id, chat_type, shop_id, resolved_dt, items_dict, forced_status=None):
+    """บันทึกออเดอร์ใหม่ทันทีโดยไม่บวกกับของเก่า"""
+    insert_payload = {
+        "chat_id": chat_id,
+        "chat_type": chat_type,
+        "shop_id": shop_id, 
+        "ddate": resolved_dt, 
+        "status": forced_status if forced_status else "credit"
+    }
+    for code, qty in items_dict.items():
+        if qty > 0:
+            insert_payload[code] = qty
+    if len(insert_payload) > 5:
+        supabase.table("orders").insert(insert_payload).execute()
 
 def build_summary_carousel(chat_id, target_date=None):
     try:
@@ -691,7 +679,7 @@ def handle_postback(event, default_chat_id):
             f_status = params.get("status", "credit")
             chat_type = "group" if "group" in chat_id else "user"
             if shop_id and target_date and code:
-                upsert_order_items(chat_id, chat_type, shop_id, target_date, {code: qty}, forced_status=f_status)
+                insert_new_order(chat_id, chat_type, shop_id, target_date, {code: qty}, forced_status=f_status)
             res_obj = build_summary_carousel(chat_id)
             send_reply(reply_token, res_obj)
             return
@@ -752,7 +740,7 @@ def handle_message(event, chat_id, chat_type):
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
             "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งออเดอร์พร้อมกันหลายบรรทัด (รองรับระบุวันที่หน้าชื่อร้าน):\n"
+            "1️⃣ สั่งออเดอร์พร้อมกันหลายบรรทัด (เพิ่มเป็นออเดอร์ใหม่ทันที):\n"
             "18 แซ่บยโส L2 R1\n"
             "18 Hangout L1 R1\n"
             "18 จานหมึก L1\n"
@@ -785,12 +773,12 @@ def handle_message(event, chat_id, chat_type):
         return
 
     for order_data in parsed_orders:
-        shop = get_or_create_shop(chat_id, order_data["shop_name"])
+        shop = create_new_shop(order_data["shop_name"])
         if not shop:
-            errors.append(f"❌ ไม่สามารถสร้างหรือหาร้าน '{order_data['shop_name']}' ได้")
+            errors.append(f"❌ ไม่สามารถสร้างร้าน '{order_data['shop_name']}' ได้")
             continue
         try:
-            upsert_order_items(chat_id, chat_type, shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
+            insert_new_order(chat_id, chat_type, shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
         except Exception as db_err:
             print(f"❌ DB Error: {db_err}")
             errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
