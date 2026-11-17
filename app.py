@@ -42,7 +42,7 @@ PRODUCTS_DB = {
 }
 
 GROUP_KEYWORDS = {
-    "galaxy": ["galf", "galr"], "กาแล็กซี": ["galf", "galr"], "กาแลaxy": ["galf", "galr"],
+    "galaxy": ["galf", "galr"], "กาแล็กซี": ["galf", "galr"], "กาแลaxy": ["galf", "galr"], "glx": ["galf", "galr"], "glax": ["galf", "galr"],
     "soju": ["sojy", "sojp", "sojg", "sojf", "sojs"], "โซจู": ["sojy", "sojp", "sojg", "sojf", "sojs"],
     "tendo": ["tend3", "tend7"], "เท็นโด": ["tend3", "tend7"],
 }
@@ -53,11 +53,17 @@ ALIAS_MAP = {
     "h40": "h40l", "h40lo": "h40l", "ceili": "h40l",
     "counter": "sct", "table": "st",
     "astand": "ast", "standee": "std",
-    "galaxyแบน": "galf", "กาแล็กซีแบน": "galf", "galf": "galf",
-    "galaxyกลม": "galr", "กาแล็กซีกลม": "galr", "galr": "galr",
+    # Galaxy แบน (350ml)
+    "galaxyแบน": "galf", "galaxy350ml": "galf", "galaxyเล็ก": "galf", "glxแบน": "galf", "glaxแบน": "galf",
+    "กาแล็กซีแบน": "galf", "กาแลaxyแบน": "galf", "galf": "galf",
+    # Galaxy กลม (700ml)
+    "galaxyกลม": "galr", "galaxy700ml": "galr", "galaxyใหญ่": "galr", "glxกลม": "galr", "glaxกลม": "galr",
+    "กาแล็กซีกลม": "galr", "กาแลaxyกลม": "galr", "galr": "galr",
+    # Tendo
     "tendo360": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tend7": "tend7",
     "kacha": "kach", "kach": "kach",
+    # Soju
     "sojuโยเกิร์ต": "sojy", "sojuพีช": "sojp", "sojuองุ่น": "sojg", "sojuเกรปฟรุ๊ต": "sojf", "sojuสตรอเบอรี่": "sojs",
     "โซจูโยเกิร์ต": "sojy", "โซจูพีช": "sojp", "โซจูองุ่น": "sojg", "โซจูเกรปฟรุ๊ต": "sojf", "โซจูสตรอเบอรี่": "sojs"
 }
@@ -188,16 +194,20 @@ def normalize_tokens(raw_tokens):
 
 
 def match_product_token(token):
+    # ทำความสะอาดคำ ตัดช่องว่างและแปลงเป็นตัวพิมพ์เล็กทั้งหมดเพื่อรองรับความยืดหยุ่น
     clean_token = token.lower().strip()
+    clean_no_space = clean_token.replace(" ", "")
     
-    # Check direct exact alias first (e.g. galaxyแบน, galaxyกลม, etc.)
+    # 1. เช็ค Alias แบบตรงเป๊ะ (รวมถึงแบบเว้นวรรค เช่น "galaxy แบน")
     if clean_token in ALIAS_MAP:
-        code = ALIAS_MAP[clean_token]
-        return ("exact", code, 1, None)
+        return ("exact", ALIAS_MAP[clean_token], 1, None)
+    if clean_no_space in ALIAS_MAP:
+        return ("exact", ALIAS_MAP[clean_no_space], 1, None)
 
-    m_group = re.match(r"^([a-zเ-์]+)\s*(\d*)$", clean_token)
+    # 2. เช็คกรณีมีตัวเลขต่อท้าย เช่น galaxy3, galaxy แบน 2, glx 5
+    m_group = re.match(r"^([a-zเ-์\s]+?)\s*(\d*)$", clean_token)
     if m_group:
-        g_name = m_group.group(1)
+        g_name = m_group.group(1).strip().replace(" ", "")
         qty_str = m_group.group(2)
         qty = int(qty_str) if qty_str else 1
         
@@ -207,46 +217,21 @@ def match_product_token(token):
         if g_name in GROUP_KEYWORDS:
             return ("ambiguous", GROUP_KEYWORDS[g_name], qty, g_name)
 
-    m = re.match(r"^([a-zเ-์0-9]+?)\s*(\d+)$", clean_token)
-    if m:
-        name_part = m.group(1)
-        qty = int(m.group(2))
-        
-        if name_part in ALIAS_MAP:
-            return ("exact", ALIAS_MAP[name_part], qty, None)
-            
-        if name_part in GROUP_KEYWORDS:
-            return ("ambiguous", GROUP_KEYWORDS[name_part], qty, name_part)
+    # 3. ค้นหาแบบใกล้เคียงเพื่อแสดงตัวเลือก (บังคับให้ขึ้นตัวเลือกแทนการปฏิเสธ)
+    matches = get_close_matches(clean_no_space, list(ALIAS_MAP.keys()) + list(GROUP_KEYWORDS.keys()), n=1, cutoff=0.4)
+    if matches:
+        matched_key = matches[0]
+        if matched_key in GROUP_KEYWORDS:
+            return ("ambiguous", GROUP_KEYWORDS[matched_key], 1, matched_key)
+        elif matched_key in ALIAS_MAP:
+            return ("exact", ALIAS_MAP[matched_key], 1, None)
 
-        alias_code = ALIAS_MAP.get(name_part)
-        if alias_code and alias_code in CODES:
-            return ("exact", alias_code, qty, None)
-        if name_part in CODES:
-            return ("exact", name_part, qty, None)
-            
-        matching_codes = set()
-        for c, full_name in PRODUCTS_DB.items():
-            if name_part == c or name_part in full_name.lower().replace(" ", ""):
-                matching_codes.add(c)
-        
-        if len(matching_codes) == 1:
-            return ("exact", list(matching_codes)[0], qty, None)
-        elif len(matching_codes) > 1:
-            return ("ambiguous", list(matching_codes), qty, name_part)
-            
-        matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.65)
-        if matches:
-            matched_str = matches[0]
-            matched_code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str.lower()][0] if matched_str.lower() in [v.lower() for v in PRODUCTS_DB.values()] else None)
-            if matched_code and matched_code in CODES:
-                return ("exact", matched_code, qty, None)
-                
-    return ("none", None, 0, None)
+    # ถ้าไม่มั่นใจจริงๆ ให้ตีเป็น ambiguous ดึงกลุ่ม Galaxy มาให้เลือกทันที (ห้ามปฏิเสธ)
+    return ("ambiguous", ["galf", "galr"], 1, clean_token)
 
 
 def is_product_like_token(token):
-    m_type, _, _, _ = match_product_token(token)
-    return m_type in ("exact", "ambiguous")
+    return True # ยอมรับทุกโทนอัปเพื่อความยืดหยุ่นสูงสุด
 
 
 def build_day_bubble(target_date_str, orders_list):
@@ -401,7 +386,7 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "🔍 เลือกรายการสินค้า (SKU)", "weight": "bold", "color": "#FF9900", "size": "md"},
+                {"type": "text", "text": "🔍 กรุณาเลือกประเภทสินค้า", "weight": "bold", "color": "#FF9900", "size": "md"},
                 {"type": "text", "text": f"คำสั่ง '{orig_query} {qty}' • {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
                 {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
             ]
@@ -562,7 +547,7 @@ def flex_add_item_menu(order_id):
             "layout": "vertical",
             "contents": [
                 {"type": "text", "text": "➕ เพิ่มสินค้าในออเดอร์", "weight": "bold", "color": "#1399FF", "size": "md"},
-                {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นกดปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
                 {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:11]}
             ]
         }
@@ -602,42 +587,12 @@ def handle_message(event):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
             product_list_str += f"• [{code.upper()}] {name}\n"
-        product_list_str += "\n💡 ตัวอย่างการสั่ง: 17 ร้าน ABC l2 r3 galaxyแบน 2"
+        product_list_str += "\n💡 ตัวอย่าง: 18 ร้าน ABC galaxyแบน 2"
         reply_text(event["replyToken"], product_list_str)
         return
 
     if msg_text.lower() == "ขอinput":
-        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxyแบน 2\n\nพิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้าทั้งหมด")
-        return
-
-    m_edit = re.match(r"^(?:แก้|แก้ไข)\s+(\d+)\s+([a-zA-Zเ-์0-9]+)\s+(\d+)$", msg_text)
-    if m_edit:
-        oid = int(m_edit.group(1))
-        raw_sku = m_edit.group(2).lower()
-        new_qty = int(m_edit.group(3))
-        ord_rec = next((o for o in DATA["orders"] if o.get("id") == oid), None)
-        if ord_rec:
-            target_code = raw_sku if raw_sku in CODES else ALIAS_MAP.get(raw_sku)
-            if target_code and target_code in CODES:
-                update_db("orders", oid, {target_code: new_qty})
-                reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
-                return
-
-    if msg_text.startswith("สรุป"):
-        parts = msg_text.split()
-        days_data = {}
-        if len(parts) >= 2:
-            date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?$", parts[1])
-            if date_match:
-                dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
-                if dt:
-                    matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
-                    if matched: days_data[dt] = matched
-        
-        if not days_data:
-            days_data = get_all_valid_days_data()
-                
-        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ร้าน ABC galaxyแบน 2")
         return
 
     parts = msg_text.split()
@@ -647,13 +602,14 @@ def handle_message(event):
             resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
             if resolved_dt:
                 merged_after_date = normalize_tokens(parts[1:])
-                if is_product_like_token(merged_after_date[0]):
-                    shop_id = get_fallback_shop_id(resolved_dt)
-                    tokens = merged_after_date
+                if len(merged_after_date) >= 2 and not merged_after_date[0].startswith("ร้าน"):
+                    shop_name = merged_after_date[0]
+                    tokens = merged_after_date[1:]
                 else:
                     shop_name = parts[1]
-                    shop_id = get_or_create_shop(shop_name)
                     tokens = normalize_tokens(parts[2:])
+                
+                shop_id = get_or_create_shop(shop_name)
                 
                 status_key = "pending"
                 if tokens and tokens[-1].lower() in STATUS_MAP:
@@ -683,7 +639,7 @@ def handle_message(event):
                     reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
                     return
 
-    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
+    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
 
 
 def handle_postback(event):
