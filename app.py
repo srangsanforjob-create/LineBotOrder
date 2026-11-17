@@ -67,7 +67,6 @@ STATUSES = {
     "slip": ("👍", "อัปสลิปแล้ว", "#00B900"),
     "credit": ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"),
     "overdue": ("🚨", "เลยกำหนดชำระ / Overdue", "#FF334B"),
-    "insufficient_credit": ("⚠️", "วงเงินไม่พอ", "#FF334B")
 }
 
 def num(v):
@@ -108,9 +107,8 @@ def get_or_create_shop(name):
         print(f"❌ Shop Create Error: {e}")
     return None
 
-def shop_by_id(sid):
-    shops, _ = fetch_fresh_data()
-    return next((s for s in shops if str(s.get("id")) == str(sid)), None)
+def shop_by_id(sid, shops_cache):
+    return next((s for s in shops_cache if str(s.get("id")) == str(sid)), None)
 
 def dmy(iso):
     try:
@@ -144,78 +142,82 @@ def send_reply(reply_token, messages):
     print(f"DEBUG Reply Status: {res.status_code}, Body: {res.text}")
 
 def build_summary_carousel():
-    _, orders = fetch_fresh_data()
-    if not orders:
-        return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
+    try:
+        shops, orders = fetch_fresh_data()
+        if not orders:
+            return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
 
-    grouped_by_date = {}
-    for o in orders:
-        dt = o.get("ddate", "ไม่ระบุ")
-        if dt not in grouped_by_date:
-            grouped_by_date[dt] = []
-        grouped_by_date[dt].append(o)
+        grouped_by_date = {}
+        for o in orders:
+            dt = o.get("ddate", "ไม่ระบุ")
+            if dt not in grouped_by_date:
+                grouped_by_date[dt] = []
+            grouped_by_date[dt].append(o)
 
-    bubbles = []
-    for date_str, date_orders in sorted(grouped_by_date.items()):
-        shop_contents = []
-        
-        for idx, o in enumerate(date_orders):
-            sh = shop_by_id(o["shop_id"])
-            shop_name = sh["name"] if sh else "ร้านค้า"
-            status_key = o.get("status", "credit")
-            icon, label, color = STATUSES.get(status_key, ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"))
+        bubbles = []
+        for date_str, date_orders in sorted(grouped_by_date.items()):
+            shop_contents = []
+            
+            for idx, o in enumerate(date_orders):
+                sh = shop_by_id(o["shop_id"], shops)
+                shop_name = sh["name"] if sh else "ร้านค้า"
+                status_key = o.get("status", "credit")
+                icon, label, color = STATUSES.get(status_key, ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"))
 
-            item_rows = []
-            for code in CODES:
-                q = num(o.get(code, 0))
-                if q > 0:
-                    p_name = PRODUCTS_DB.get(code, code)
-                    item_rows.append({
-                        "type": "box",
-                        "layout": "horizontal",
-                        "contents": [
-                            {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
-                            {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
-                        ]
-                    })
-            if not item_rows:
-                item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
+                item_rows = []
+                for code in CODES:
+                    q = num(o.get(code, 0))
+                    if q > 0:
+                        p_name = PRODUCTS_DB.get(code, code)
+                        item_rows.append({
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
+                                {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
+                            ]
+                        })
+                if not item_rows:
+                    item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
 
-            if idx > 0:
-                shop_contents.append({"type": "separator", "margin": "lg"})
+                if idx > 0:
+                    shop_contents.append({"type": "separator", "margin": "lg"})
 
-            shop_contents.extend([
-                {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
-                {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
-                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
-            ])
+                shop_contents.extend([
+                    {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
+                    {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
+                ])
 
-        bubbles.append({
-            "type": "bubble",
-            "size": "kilo",
-            "header": {
-                "type": "box",
-                "layout": "vertical",
-                "contents": [
-                    {"type": "text", "text": f"📅 สรุปยอดวันที่ {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#ffffff"}
-                ],
-                "backgroundColor": "#06C755"
-            },
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "contents": shop_contents
+            bubbles.append({
+                "type": "bubble",
+                "size": "kilo",
+                "header": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {"type": "text", "text": f"📅 สรุปยอดวันที่ {dmy(date_str)}", "weight": "bold", "size": "sm", "color": "#ffffff"}
+                    ],
+                    "backgroundColor": "#06C755"
+                },
+                "body": {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": shop_contents
+                }
+            })
+
+        return {
+            "type": "flex",
+            "altText": "สรุปรายการออเดอร์รายวัน",
+            "contents": {
+                "type": "carousel",
+                "contents": bubbles[:10]
             }
-        })
-
-    return {
-        "type": "flex",
-        "altText": "สรุปรายการออเดอร์รายวัน",
-        "contents": {
-            "type": "carousel",
-            "contents": bubbles[:10]
         }
-    }
+    except Exception as e:
+        print(f"❌ Build Carousel Error: {e}")
+        return {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการสร้างการ์ดสรุป: {str(e)}"}
 
 @app.route("/callback", methods=["POST"])
 def callback():
