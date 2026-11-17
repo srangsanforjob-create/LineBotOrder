@@ -474,26 +474,21 @@ def flex_carousel_summary(days_data):
 
 
 def send_reply_response(rt, res_obj):
+    messages = []
     if isinstance(res_obj, list):
-        # กรณีส่งเป็นลิสต์ของ Flex Carousel หลายก้อน (แบ่งไม่เกิน 5 ข้อความต่อ 1 reply)
-        requests.post(
-            "https://api.line.me/v2/bot/message/reply",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-            json={"replyToken": rt, "messages": res_obj[:5]}
-        )
+        messages = res_obj[:5]
     elif isinstance(res_obj, dict) and res_obj.get("type") == "text":
-        requests.post(
-            "https://api.line.me/v2/bot/message/reply",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-            json={"replyToken": rt, "messages": [{"type": "text", "text": res_obj["text"]}]}
-        )
+        messages = [{"type": "text", "text": res_obj["text"]}]
     else:
-        # กรณี Flex Message ปกติแบบเดี่ยว
-        requests.post(
-            "https://api.line.me/v2/bot/message/reply",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-            json={"replyToken": rt, "messages": [res_obj]}
-        )
+        messages = [res_obj]
+
+    res = requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        json={"replyToken": rt, "messages": messages}
+    )
+    if res.status_code != 200:
+        print(f"❌ LINE Reply Error ({res.status_code}): {res.text}")
 
 
 def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
