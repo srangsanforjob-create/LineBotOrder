@@ -100,8 +100,6 @@ STATUSES = {
 }
 
 app = Flask(__name__)
-DATA = {"shops": [], "orders": [], "pending": []}
-LOADED = False
 
 
 def num(v):
@@ -111,24 +109,19 @@ def num(v):
         return 0
 
 
-def load():
-    global DATA, LOADED
+def fetch_fresh_data():
     try:
         shops_res = supabase.table("shops").select("*").execute()
         orders_res = supabase.table("orders").select("*").execute()
         pending_res = supabase.table("pending").select("*").execute()
 
-        DATA["shops"] = shops_res.data or []
-        DATA["orders"] = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (orders_res.data or [])]
-        DATA["pending"] = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (pending_res.data or [])]
-        LOADED = True
+        shops = shops_res.data or []
+        orders = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (orders_res.data or [])]
+        pending = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (pending_res.data or [])]
+        return shops, orders, pending
     except Exception as e:
-        print(f"❌ Load Error: {e}")
-
-
-def ensure_loaded():
-    if not LOADED or not DATA["orders"]:
-        load()
+        print(f"❌ Fetch Error: {e}")
+        return [], [], []
 
 
 def add(tab, d):
@@ -138,49 +131,34 @@ def add(tab, d):
     res = supabase.table(tab).insert(payload).execute()
     if res.data:
         inserted = {k: num(res.data[0][k]) if k in CODES else res.data[0][k] for k in res.data[0]}
-        DATA[tab].append(inserted)
         return inserted
     return d
 
 
 def update_db(tab, oid, payload):
     supabase.table(tab).update(payload).eq("id", oid).execute()
-    for item in DATA[tab]:
-        if str(item.get("id")) == str(oid):
-            item.update(payload)
 
 
 def delete_db(tab, oid):
     supabase.table(tab).delete().eq("id", oid).execute()
-    DATA[tab] = [item for item in DATA[tab] if str(item.get("id")) != str(oid)]
 
 
 def delete_orders_by_date(target_date_str):
     supabase.table("orders").delete().eq("ddate", target_date_str).execute()
-    DATA["orders"] = [item for item in DATA["orders"] if item.get("ddate") != target_date_str]
 
 
 def update_status_by_date(target_date_str, new_status):
     supabase.table("orders").update({"status": new_status}).eq("ddate", target_date_str).execute()
-    for item in DATA["orders"]:
-        if item.get("ddate") == target_date_str:
-            item["status"] = new_status
 
 
 def get_order_by_id(oid):
-    ord_rec = next((o for o in DATA["orders"] if str(o.get("id")) == str(oid)), None)
-    if not ord_rec:
-        load()
-        ord_rec = next((o for o in DATA["orders"] if str(o.get("id")) == str(oid)), None)
-    return ord_rec
+    _, orders, _ = fetch_fresh_data()
+    return next((o for o in orders if str(o.get("id")) == str(oid)), None)
 
 
 def shop_by_id(sid):
-    sh = next((s for s in DATA["shops"] if str(s.get("id")) == str(sid)), None)
-    if not sh:
-        load()
-        sh = next((s for s in DATA["shops"] if str(s.get("id")) == str(sid)), None)
-    return sh
+    shops, _, _ = fetch_fresh_data()
+    return next((s for s in shops if str(s.get("id")) == str(sid)), None)
 
 
 def dmy(iso):
@@ -211,15 +189,15 @@ def resolve_date(day_val, month_val=None, year_val=None):
 
 
 def get_or_create_shop(name):
-    ensure_loaded()
+    shops, _, _ = fetch_fresh_data()
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
-    s = next((s for s in DATA["shops"] if s["name"] == dn), None)
+    s = next((s for s in shops if s["name"] == dn), None)
     if s:
         return s["id"]
     new_shop = add("shops", {"name": dn, "aliases": ""})
-    return new_shop["id"]
+    return new_shop.get("id")
 
 
 def normalize_tokens(raw_tokens):
@@ -736,8 +714,6 @@ def callback():
     except Exception:
         abort(400)
 
-    ensure_loaded()
-
     try:
         for event in json.loads(body).get("events", []):
             if event.get("type") == "message":
@@ -751,15 +727,15 @@ def callback():
 
 
 def get_all_valid_days_data():
-    ensure_loaded()
-    all_dates = set(o.get("ddate") for o in DATA["orders"] if o.get("ddate"))
+    _, orders, _ = fetch_fresh_data()
+    all_dates = set(o.get("ddate") for o in orders if o.get("ddate"))
     sorted_dates = sorted(list(all_dates))
-    return {sd: [o for o in DATA["orders"] if o.get("ddate") == sd] for sd in sorted_dates}
+    return {sd: [o for o in orders if o.get("ddate") == sd] for sd in sorted_dates}
 
 
 def get_specific_day_data(date_str):
-    ensure_loaded()
-    day_orders = [o for o in DATA["orders"] if o.get("ddate") == date_str]
+    _, orders, _ = fetch_fresh_data()
+    day_orders = [o for o in orders if o.get("ddate") == date_str]
     if day_orders:
         return {date_str: day_orders}
     return {}
@@ -846,7 +822,8 @@ def handle_message(event):
                         return
 
                 if order_items:
-                    existing_order = next((o for o in DATA["orders"] if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
+                    _, current_orders, _ = fetch_fresh_data()
+                    existing_order = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
                     if existing_order:
                         oid = existing_order["id"]
                         update_payload = {c: num(existing_order.get(c, 0)) + order_items.get(c, 0) for c in CODES if order_items.get(c, 0) > 0}
@@ -867,7 +844,6 @@ def handle_message(event):
 
 
 def handle_postback(event):
-    ensure_loaded()
     data_str = event["postback"].get("data", "")
     parts = data_str.split("|")
     action = parts[0]
@@ -877,7 +853,7 @@ def handle_postback(event):
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -887,7 +863,7 @@ def handle_postback(event):
         new_status = parts[1]
         target_date_str = parts[2]
         update_status_by_date(target_date_str, new_status)
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -901,14 +877,14 @@ def handle_postback(event):
     elif action == "day_delete_do" and len(parts) == 2:
         target_date_str = parts[1]
         delete_orders_by_date(target_date_str)
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
             reply_flex(event["replyToken"], msg_obj)
 
     elif action == "cancel":
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -917,7 +893,7 @@ def handle_postback(event):
     elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -944,7 +920,7 @@ def handle_postback(event):
         if ord_rec:
             existing_new_qty = num(ord_rec.get(new_code, 0))
             update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -961,7 +937,7 @@ def handle_postback(event):
         code = parts[2]
         new_qty = int(parts[3])
         update_db("orders", order_id, {code: new_qty})
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -978,7 +954,8 @@ def handle_postback(event):
         code = parts[3]
         qty = int(parts[4])
 
-        existing_order = next((o for o in DATA["orders"] if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
+        _, current_orders, _ = fetch_fresh_data()
+        existing_order = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
         if existing_order:
             oid = existing_order["id"]
             current_qty = num(existing_order.get(code, 0))
@@ -987,7 +964,7 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
 
-        msg_obj = flex_carousel_summary(all_data)
+        msg_obj = flex_carousel_summary(get_all_valid_days_data())
         if msg_obj.get("type") == "text":
             reply_text(event["replyToken"], msg_obj["text"])
         else:
@@ -1011,8 +988,6 @@ def reply_flex(rt, flex):
     if res.status_code != 200:
         print(f"❌ LINE Flex Error ({res.status_code}): {res.text}")
 
-
-load()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
