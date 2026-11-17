@@ -72,27 +72,6 @@ ALIAS_MAP = {
     "sojustrawberry": "sojs", "โซจูสตรอเบอรี่": "sojs", "โซจสตรอ": "sojs", "สตรอเบอรี่": "sojs", "sojs": "sojs"
 }
 
-AMBIGUOUS_GROUPS = {
-    "soju": ["sojy", "sojp", "sojg", "sojf", "sojs"],
-    "โซจู": ["sojy", "sojp", "sojg", "sojf", "sojs"],
-    "โซจ": ["sojy", "sojp", "sojg", "sojf", "sojs"],
-    "galaxy": ["galf", "galr"],
-    "กาแล็กซี่": ["galf", "galr"],
-    "gal": ["galf", "galr"],
-    "tendo": ["tend3", "tend7"],
-    "เทนโด": ["tend3", "tend7"],
-    "tend": ["tend3", "tend7"],
-    "hoshizaki": ["h40l", "h90", "h120"],
-    "โฮชิซากิ": ["h40l", "h90", "h120"],
-    "ตู้": ["h40l", "h90", "h120"],
-    "อะคริลิก": ["aa5", "aa6"],
-    "acrylic": ["aa5", "aa6"],
-    "สแตนเลส": ["sct", "st"],
-    "stainless": ["sct", "st"],
-    "เบียร์สด": ["l", "r", "d"],
-    "draft": ["l", "r", "d"]
-}
-
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
     "ordered": ("✅", "Order แล้ว", "#06C755"),
@@ -124,7 +103,6 @@ def fetch_fresh_data(chat_id, target_date=None):
         return [], []
 
 def create_new_shop(name):
-    """สร้างร้านใหม่ทันทีโดยไม่ค้นหาของเก่า"""
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
@@ -138,7 +116,7 @@ def create_new_shop(name):
         if res.data:
             return res.data[0]
     except Exception as e:
-        print(f"❌ Shop Create Error: {e}")
+        print(f" Error: {e}")
     return None
 
 def shop_by_id(sid, shops_cache):
@@ -178,7 +156,7 @@ def parse_target_date(text_arg):
             else:
                 return date(y - 543, m, d).isoformat()
     except Exception as e:
-        print(f"❌ Parse Date Error: {e}")
+        print(f"e}")
     return None
 
 def send_reply(reply_token, messages):
@@ -195,38 +173,22 @@ def send_reply(reply_token, messages):
     res = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
     print(f"DEBUG Reply Status: {res.status_code}, Body: {res.text}")
 
-def find_matching_skus(term):
-    t = term.lower().strip()
-    if t in AMBIGUOUS_GROUPS:
-        return AMBIGUOUS_GROUPS[t]
-    if t in ALIAS_MAP:
-        return [ALIAS_MAP[t]]
-    matched = set()
-    for alias, code in ALIAS_MAP.items():
-        if len(t) >= 2 and (t in alias or alias in t):
-            matched.add(code)
-    for code, name in PRODUCTS_DB.items():
-        if len(t) >= 2 and t in name.lower():
-            matched.add(code)
-    return list(matched)
-
-def split_product_qty(token):
-    token_clean = token.lower().strip()
-    if find_matching_skus(token_clean):
-        return token_clean, None
-    m = re.match(r"^([a-zA-Zก-๙\-]+?)(-?\d+)$", token_clean)
-    if m and find_matching_skus(m.group(1)):
-        return m.group(1), int(m.group(2))
-    return token_clean, None
+def is_product_token(token):
+    clean = token.lower().strip()
+    if clean in ALIAS_MAP or clean in CODES:
+        return True
+    m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean)
+    if m and m.group(1).lower() in ALIAS_MAP:
+        return True
+    return False
 
 def parse_order_lines(raw_text):
     lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
     if not lines:
-        return [], [], ["ไม่พบข้อความคำสั่ง"]
+        return [], []
 
     global_date = today().isoformat()
     parsed_orders = []
-    ambiguous_requests = []
     errors = []
 
     for line in lines:
@@ -234,18 +196,19 @@ def parse_order_lines(raw_text):
         if not tokens:
             continue
 
-        line_date = global_date
+        current_date = global_date
         idx = 0
 
+        # เช็คว่าโทเค็นแรกเป็นวันที่
         if tokens[0].isdigit() and len(tokens[0]) <= 2:
-            line_date = resolve_date(int(tokens[0]))
+            current_date = resolve_date(int(tokens[0]))
             idx = 1
-            global_date = line_date
+            global_date = current_date
 
         if idx >= len(tokens):
-            errors.append(f"❌ รูปแบบไม่ถูกต้องในบรรทัด: '{line}'")
             continue
 
+        # ตรวจสอบสถานะท้ายบรรทัด
         line_status = None
         last_tok = tokens[-1].lower()
         if last_tok in ["ออเดอร์", "order", "ordered"]:
@@ -256,143 +219,65 @@ def parse_order_lines(raw_text):
             tokens.pop()
 
         if idx >= len(tokens):
-            errors.append(f"❌ ไม่พบข้อมูลสินค้าในบรรทัด: '{line}'")
             continue
 
-        product_start_idx = idx
-        while product_start_idx < len(tokens):
-            raw_tok = tokens[product_start_idx]
-            sub_m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", raw_tok)
-            p_check = sub_m.group(1) if sub_m else raw_tok
-            
-            matched = find_matching_skus(p_check)
-            if matched:
+        # ค้นหาโทเค็นแรกที่เป็นสินค้า
+        first_item_idx = -1
+        for i in range(idx, len(tokens)):
+            if is_product_token(tokens[i]):
+                first_item_idx = i
                 break
-            product_start_idx += 1
 
-        if product_start_idx >= len(tokens) or product_start_idx == idx:
-            errors.append(f"❌ ไม่พบสินค้าในระบบสำหรับบรรทัด: '{line}'")
+        if first_item_idx == -1:
+            errors.append(f"❌ ไม่พบรายการสินค้าในบรรทัด: '{line}'")
             continue
 
-        shop_name = " ".join(tokens[idx:product_start_idx])
-        idx = product_start_idx
+        shop_name = " ".join(tokens[idx:first_item_idx])
+        if not shop_name:
+            shop_name = "ร้านค้าทั่วไป"
 
+        item_tokens = tokens[first_item_idx:]
         items = {}
-        while idx < len(tokens):
-            raw_tok = tokens[idx]
-            
-            sub_m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", raw_tok)
-            if sub_m:
-                p_part = sub_m.group(1)
-                qty_part = int(sub_m.group(2))
-                matched_codes = find_matching_skus(p_part)
-                if matched_codes and len(matched_codes) == 1:
-                    code = matched_codes[0]
+        i = 0
+        while i < len(item_tokens):
+            tok = item_tokens[i]
+            clean_tok = tok.lower().strip()
+
+            # เคสติดกัน เช่น L2
+            m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_tok)
+            if m:
+                p_part = m.group(1)
+                qty_part = int(m.group(2))
+                if p_part in ALIAS_MAP:
+                    code = ALIAS_MAP[p_part]
                     items[code] = items.get(code, 0) + qty_part
-                    idx += 1
+                    i += 1
                     continue
 
-            p_name, attached_qty = split_product_qty(raw_tok)
-            matched_codes = find_matching_skus(p_name)
-
-            if not matched_codes:
-                errors.append(f"❌ ไม่รู้จักสินค้า '{raw_tok}' (ร้าน {shop_name})")
-                idx += 1
-                continue
-
-            if attached_qty is not None:
-                qty = attached_qty
-                idx += 1
-            elif idx + 1 < len(tokens) and re.match(r"^-?\d+$", tokens[idx + 1]):
-                qty = int(tokens[idx + 1])
-                idx += 2
-            else:
+            # เคสปกติ
+            if clean_tok in ALIAS_MAP:
+                code = ALIAS_MAP[clean_tok]
                 qty = 1
-                idx += 1
-
-            if len(matched_codes) == 1:
-                code = matched_codes[0]
+                if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i+1]):
+                    qty = int(item_tokens[i+1])
+                    i += 1
                 items[code] = items.get(code, 0) + qty
             else:
-                ambiguous_requests.append({
-                    "ddate": line_date,
-                    "shop_name": shop_name,
-                    "keyword": p_name,
-                    "qty": qty,
-                    "candidates": matched_codes,
-                    "forced_status": line_status
-                })
+                errors.append(f"❌ ไม่รู้จักสินค้า '{tok}' ในบรรทัด: '{line}'")
+
+            i += 1
 
         if items:
             parsed_orders.append({
-                "ddate": line_date,
+                "ddate": current_date,
                 "shop_name": shop_name,
                 "items": items,
                 "forced_status": line_status
             })
 
-    return parsed_orders, ambiguous_requests, errors
-
-def build_disambiguation_flex(chat_id, ambiguous_list):
-    bubbles = []
-    for req in ambiguous_list[:10]:
-        shop_obj = create_new_shop(req["shop_name"])
-        shop_id = shop_obj["id"] if shop_obj else ""
-        shop_display = shop_obj["name"] if shop_obj else req["shop_name"]
-        ddate = req["ddate"]
-        qty = req["qty"]
-        keyword = req["keyword"]
-        f_status = req.get("forced_status", "credit")
-
-        buttons = []
-        for code in req["candidates"]:
-            p_name = PRODUCTS_DB.get(code, code)
-            buttons.append({
-                "type": "button",
-                "style": "primary",
-                "height": "sm",
-                "color": "#06C755",
-                "margin": "sm",
-                "action": {
-                    "type": "postback",
-                    "label": f"{p_name} ({qty})",
-                    "data": f"action=pick_sku&chat_id={chat_id}&sid={shop_id}&date={ddate}&code={code}&qty={qty}&status={f_status}"
-                }
-            })
-
-        bubbles.append({
-            "type": "bubble",
-            "size": "kilo",
-            "header": {
-                "type": "box",
-                "layout": "vertical",
-                "backgroundColor": "#FF9900",
-                "contents": [
-                    {"type": "text", "text": "🤔 เลือก SKU สินค้า", "weight": "bold", "size": "sm", "color": "#ffffff"}
-                ]
-            },
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "contents": [
-                    {"type": "text", "text": f"{shop_display} ({dmy(ddate)})", "weight": "bold", "size": "md", "color": "#111111"},
-                    {"type": "text", "text": f"คำว่า \"{keyword}\" จำนวน {qty} ตรงกับหลายรายการ กรุณาเลือก:", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"},
-                    {"type": "box", "layout": "vertical", "margin": "md", "contents": buttons}
-                ]
-            }
-        })
-
-    return {
-        "type": "flex",
-        "altText": "กรุณาเลือก SKU สินค้าที่ต้องการ",
-        "contents": {
-            "type": "carousel",
-            "contents": bubbles
-        }
-    }
+    return parsed_orders, errors
 
 def insert_new_order(chat_id, chat_type, shop_id, resolved_dt, items_dict, forced_status=None):
-    """บันทึกออเดอร์ใหม่ทันทีโดยไม่บวกกับของเก่า"""
     insert_payload = {
         "chat_id": chat_id,
         "chat_type": chat_type,
@@ -658,7 +543,7 @@ def callback():
             elif event.get("type") == "postback":
                 handle_postback(event, chat_id)
     except Exception as e:
-        print(f"❌ Callback Error: {e}")
+        print(f"}")
 
     return "OK", 200
 
@@ -671,20 +556,7 @@ def handle_postback(event, default_chat_id):
     chat_id = params.get("chat_id", default_chat_id)
     
     try:
-        if action == "pick_sku":
-            shop_id = params.get("sid")
-            target_date = params.get("date")
-            code = params.get("code")
-            qty = num(params.get("qty"))
-            f_status = params.get("status", "credit")
-            chat_type = "group" if "group" in chat_id else "user"
-            if shop_id and target_date and code:
-                insert_new_order(chat_id, chat_type, shop_id, target_date, {code: qty}, forced_status=f_status)
-            res_obj = build_summary_carousel(chat_id)
-            send_reply(reply_token, res_obj)
-            return
-
-        elif action == "status":
+        if action == "status":
             order_id = params.get("id")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
@@ -740,7 +612,7 @@ def handle_message(event, chat_id, chat_type):
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
             "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งออเดอร์พร้อมกันหลายบรรทัด (เพิ่มเป็นออเดอร์ใหม่ทันที):\n"
+            "1️⃣ สั่งออเดอร์พร้อมกันหลายบรรทัด:\n"
             "18 แซ่บยโส L2 R1\n"
             "18 Hangout L1 R1\n"
             "18 จานหมึก L1\n"
@@ -757,19 +629,13 @@ def handle_message(event, chat_id, chat_type):
         send_reply(reply_token, {"type": "text", "text": f"📋 รหัส/คำย่อสินค้า:\n{product_list}"})
         return
 
-    parsed_orders, ambiguous_requests, errors = parse_order_lines(text)
+    parsed_orders, errors = parse_order_lines(text)
 
-    if not parsed_orders and not ambiguous_requests:
-        sample_format_msg = (
-            "❌ รูปแบบคำสั่งไม่ถูกต้องหรือไม่พบสินค้าในระบบ\n\n"
-            "💡 ตัวอย่าง Format ที่ถูกต้อง (หลายบรรทัดพร้อมกัน):\n"
-            "18 แซ่บยโส L2 R1\n"
-            "18 Hangout L1 R1\n"
-            "18 จานหมึก L1\n"
-            "18 แยกบรรทัดทอง L3\n\n"
-            "พิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าครับ"
-        )
-        send_reply(reply_token, {"type": "text", "text": sample_format_msg})
+    if not parsed_orders:
+        msg_text = "❌ ไม่พบรูปแบบออเดอร์ที่ถูกต้อง\n\n"
+        if errors:
+            msg_text += "ข้อผิดพลาด:\n" + "\n".join(errors)
+        send_reply(reply_token, {"type": "text", "text": msg_text})
         return
 
     for order_data in parsed_orders:
@@ -780,17 +646,14 @@ def handle_message(event, chat_id, chat_type):
         try:
             insert_new_order(chat_id, chat_type, shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
         except Exception as db_err:
-            print(f"❌ DB Error: {db_err}")
+            print(f": {db_err}")
             errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
 
     messages = []
     if errors:
         messages.append({"type": "text", "text": "⚠️ แจ้งเตือนบางรายการ:\n" + "\n".join(errors)})
 
-    if ambiguous_requests:
-        messages.append(build_disambiguation_flex(chat_id, ambiguous_requests))
-    else:
-        messages.append(build_summary_carousel(chat_id))
+    messages.append(build_summary_carousel(chat_id))
 
     send_reply(reply_token, messages)
 
