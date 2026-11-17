@@ -85,6 +85,22 @@ STATUS_KEYWORDS = {
     'insufficient_credit': 'insufficient_credit', 'วงเงินเต็ม': 'insufficient_credit'
 }
 
+DAYS_TH = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
+MONTHS_TH = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+]
+
+def format_thai_date(date_str):
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        day_name = DAYS_TH[dt.weekday()]
+        month_name = MONTHS_TH[dt.month - 1]
+        year_th = dt.year + 543
+        return f"วัน{day_name} ที่ {dt.day} {month_name} {year_th}"
+    except:
+        return f"วันที่ {date_str}"
+
 def safe_int(val):
     try:
         return int(val)
@@ -97,7 +113,7 @@ def get_bangkok_date_str():
 def fetch_data(chat_id):
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).order("ddate", desc=True).execute()
+        orders_res = supabase.table("orders").select("*").eq("chat_id", chat_id).order("id", desc=False).execute()
         shops = shops_res.data or []
         orders = orders_res.data or []
         return shops, orders
@@ -202,6 +218,7 @@ def build_carousel(chat_id):
 
     shop_map = {str(s["id"]): s for s in shops}
     
+    # จัดกลุ่มออเดอร์ตามวันที่ ddate อย่างเคร่งครัด
     grouped_by_date = {}
     for order in orders:
         ddate = order.get("ddate", get_bangkok_date_str())
@@ -213,9 +230,35 @@ def build_carousel(chat_id):
     
     for ddate, date_orders in grouped_by_date.items():
         daily_totals = {code: 0 for code in CODES}
+        formatted_date = format_thai_date(ddate)
+        
         content_blocks = [
-            {"type": "text", "text": f"📅 สรุปยอดวันที่ {ddate}", "weight": "bold", "size": "md", "color": "#111111"},
-            {"type": "separator", "margin": "md"}
+            {"type": "text", "text": formatted_date, "weight": "bold", "size": "md", "color": "#111111"},
+            # ปุ่มควบคุมสถานะภาพรวมทั้งวัน
+            {
+                "type": "box", "layout": "horizontal", "spacing": "sm", "margin": "md",
+                "contents": [
+                    {
+                        "type": "button", "action": {
+                            "type": "postback", "label": "Order แล้ว",
+                            "data": f"action=update_daily&date={ddate}&status=ordered"
+                        }, "style": "primary", "color": "#06C755", "height": "sm"
+                    },
+                    {
+                        "type": "button", "action": {
+                            "type": "postback", "label": "อัปสลิปแล้ว",
+                            "data": f"action=update_daily&date={ddate}&status=slip"
+                        }, "style": "primary", "color": "#00B900", "height": "sm"
+                    },
+                    {
+                        "type": "button", "action": {
+                            "type": "postback", "label": "ยกเลิกทั้งหมด",
+                            "data": f"action=delete_daily&date={ddate}"
+                        }, "style": "secondary", "color": "#FF334B", "height": "sm"
+                    }
+                ]
+            },
+            {"type": "separator", "margin": "lg"}
         ]
         
         for order in date_orders:
@@ -246,7 +289,8 @@ def build_carousel(chat_id):
                 "contents": [
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "sm", "color": "#0066cc"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color},
-                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows}
+                    {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows},
+                    {"type": "separator", "margin": "md"}
                 ]
             })
 
@@ -264,12 +308,11 @@ def build_carousel(chat_id):
                 })
         
         if summary_rows:
-            content_blocks.append({"type": "separator", "margin": "lg"})
             content_blocks.append({
                 "type": "box", "layout": "vertical", "margin": "md", "paddingAll": "md",
                 "backgroundColor": "#222222", "cornerRadius": "md",
                 "contents": [
-                    {"type": "text", "text": "📦 รวมยอดสินค้าประจำวันนี้นี้", "weight": "bold", "size": "sm", "color": "#ffcc00"},
+                    {"type": "text", "text": "📦 รวมยอดสินค้าประจำวันนี้", "weight": "bold", "size": "sm", "color": "#ffcc00"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": summary_rows}
                 ]
             })
@@ -295,6 +338,28 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
+            if event.get("type") == "postback":
+                data_str = event.get("postback", {}).get("data", "")
+                query_params = dict(qp.split("=") for qp in data_str.split("&") if "=" in qp)
+                action = query_params.get("action")
+                target_date = query_params.get("date")
+                source = event.get("source", {})
+                chat_type = source.get("type", "user")
+                if chat_type == "group": chat_id = source.get("groupId")
+                elif chat_type == "room": chat_id = source.get("roomId")
+                else: chat_id = source.get("userId", "user")
+                
+                reply_token = event.get("replyToken", "")
+                
+                if action == "update_daily" and target_date:
+                    new_status = query_params.get("status", "pending")
+                    supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
+                elif action == "delete_daily" and target_date:
+                    supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
+                continue
+
             if event.get("type") == "message" and event["message"].get("type") == "text":
                 text = event["message"]["text"].strip()
                 source = event.get("source", {})
