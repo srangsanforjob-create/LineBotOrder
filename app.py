@@ -206,12 +206,11 @@ def resolve_date(day_val, month_val=None, year_val=None):
         if year_val:
             if year_val < 100:
                 year_val += 2000
-            if month_val:
-                return date(year_val, month_val, day_val).isoformat()
-            return date(t.year, month_val or t.month, day_val).isoformat()
+            return date(year_val, month_val or t.month, day_val).isoformat()
         if month_val:
             d = date(t.year, month_val, day_val)
             return d.isoformat() if d >= t else date(t.year + 1, month_val, day_val).isoformat()
+        # ถ้าระบุแค่วัน (ไม่มีเดือน ไม่มีปี) ให้ใช้เดือนและปีปัจจุบันตามที่ผู้ใช้ขอ
         return date(t.year, t.month, day_val).isoformat()
     except Exception:
         return None
@@ -403,7 +402,6 @@ def build_day_bubble(target_date_str, orders_list):
         }
         order_blocks.append(block)
 
-    # ปุ่มจัดการทั้งวัน (วางไว้ที่หัวของการ์ดวันนั้นๆ)
     day_action_box = {
         "type": "box",
         "layout": "vertical",
@@ -787,9 +785,13 @@ def handle_message(event):
 
     parts = msg_text.split()
     if len(parts) >= 2:
-        date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?$", parts[0])
+        date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
         if date_match:
-            resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
+            d_val = int(date_match.group(1))
+            m_val = int(date_match.group(2)) if date_match.group(2) else None
+            y_val = int(date_match.group(3)) if date_match.group(3) else None
+            
+            resolved_dt = resolve_date(d_val, m_val, y_val)
             if resolved_dt:
                 if parts[1] == "ร้าน" and len(parts) >= 4:
                     shop_name = f"ร้าน {parts[2]}"
