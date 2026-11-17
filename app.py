@@ -4,7 +4,6 @@ import hmac
 import json
 import os
 import re
-import threading
 import traceback
 from datetime import date, datetime
 from difflib import get_close_matches
@@ -64,21 +63,17 @@ ALIAS_MAP = {
     "astand": "ast", "ast": "ast",
     "standee": "std", "std": "std",
     "aa5": "aa5", "aa6": "aa6",
-    # Galaxy แบน (350ml)
     "galaxyแบน": "galf", "galaxy350": "galf", "galaxy350ml": "galf", "galaxyเล็ก": "galf",
     "glxแบน": "galf", "glaxแบน": "galf", "glx350": "galf", "glax350": "galf",
     "glxเล็ก": "galf", "glaxเล็ก": "galf",
     "กาแล็กซีแบน": "galf", "กาแล็กซี่แบน": "galf", "กาแลaxyแบน": "galf", "galf": "galf",
-    # Galaxy กลม (700ml)
     "galaxyกลม": "galr", "galaxy700": "galr", "galaxy700ml": "galr", "galaxyใหญ่": "galr",
     "glxกลม": "galr", "glaxกลม": "galr", "glx700": "galr", "glax700": "galr",
     "glxใหญ่": "galr", "glaxใหญ่": "galr",
     "กาแล็กซีกลม": "galr", "กาแล็กซี่กลม": "galr", "กาแลaxyกลม": "galr", "galr": "galr",
-    # Tendo
     "tendo360": "tend3", "tendo360ml": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tendo700ml": "tend7", "tend7": "tend7",
     "kacha": "kach", "kacha375": "kach", "kach": "kach",
-    # Soju
     "sojuโยเกิร์ต": "sojy", "sojuพีช": "sojp", "sojuองุ่น": "sojg", "sojuเกรปฟรุ๊ต": "sojf", "sojuสตรอเบอรี่": "sojs",
     "โซจูโยเกิร์ต": "sojy", "โซจูพีช": "sojp", "โซจูองุ่น": "sojg", "โซจูเกรปฟรุ๊ต": "sojf", "โซจูสตรอเบอรี่": "sojs",
     "sojy": "sojy", "sojp": "sojp", "sojg": "sojg", "sojf": "sojf", "sojs": "sojs"
@@ -371,9 +366,9 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
-                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "⏳ Pending", "data": f"status|pending|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#FF9900", "height": "sm", "action": {"type": "postback", "label": "⏳ Pending", "data": f"status|pending|{order_id}"}},
                                 {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ Order", "data": f"status|ordered|{order_id}"}},
-                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "👍 Slip", "data": f"status|slip|{order_id}"}}
+                                {"type": "button", "style": "primary", "color": "#00B900", "height": "sm", "action": {"type": "postback", "label": "👍 Slip", "data": f"status|slip|{order_id}"}}
                             ]
                         },
                         {
@@ -381,9 +376,9 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
-                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "💳 Credit", "data": f"status|credit|{order_id}"}},
-                                {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "⚠️ Overdue", "data": f"status|overdue|{order_id}"}},
-                                {"type": "button", "style": "secondary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "❗ วงเงินไม่พอ", "data": f"status|limit|{order_id}"}}
+                                {"type": "button", "style": "primary", "color": "#0088CC", "height": "sm", "action": {"type": "postback", "label": "💳 Credit", "data": f"status|credit|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "⚠️ Overdue", "data": f"status|overdue|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "❗ วงเงินไม่พอ", "data": f"status|limit|{order_id}"}}
                             ]
                         },
                         {
@@ -391,8 +386,8 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
-                                {"type": "button", "style": "secondary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขรายการ", "data": f"edit_menu|{order_id}"}},
-                                {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
+                                {"type": "button", "style": "primary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขรายการ", "data": f"edit_menu|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
                             ]
                         }
                     ]
@@ -414,8 +409,8 @@ def build_day_bubble(target_date_str, orders_list):
                 "layout": "horizontal",
                 "spacing": "xs",
                 "contents": [
-                    {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ ออเดอร์แล้วทั้งวัน", "data": f"day_status|ordered|{target_date_str}"}},
-                    {"type": "button", "style": "primary", "color": "#00B900", "height": "sm", "action": {"type": "postback", "label": "👍 สลิปแล้วทั้งวัน", "data": f"day_status|slip|{target_date_str}"}}
+                    {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ ออเดอร์ทั้งวัน", "data": f"day_status|ordered|{target_date_str}"}},
+                    {"type": "button", "style": "primary", "color": "#00B900", "height": "sm", "action": {"type": "postback", "label": "👍 สลิปทั้งวัน", "data": f"day_status|slip|{target_date_str}"}}
                 ]
             },
             {
@@ -423,7 +418,7 @@ def build_day_bubble(target_date_str, orders_list):
                 "layout": "horizontal",
                 "spacing": "xs",
                 "contents": [
-                    {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์ทั้งวัน", "data": f"day_delete_confirm|{target_date_str}"}}
+                    {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์ทั้งวัน", "data": f"day_delete_confirm|{target_date_str}"}}
                 ]
             }
         ]
@@ -468,7 +463,7 @@ def flex_confirm_delete_day(target_date_str):
                         "margin": "lg",
                         "contents": [
                             {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ยืนยันลบทั้งหมด", "data": f"day_delete_do|{target_date_str}"}},
-                            {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "❌ ยกเลิก", "data": "cancel"}}
+                            {"type": "button", "style": "primary", "color": "#888888", "height": "sm", "action": {"type": "postback", "label": "❌ ยกเลิก", "data": "cancel"}}
                         ]
                     }
                 ]
@@ -484,11 +479,9 @@ def flex_carousel_summary(days_data):
             bubbles.append(build_day_bubble(d_str, o_list))
 
     if not bubbles:
-        bubbles.append({
-            "type": "bubble",
-            "size": "mega",
-            "body": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "ไม่มีข้อมูลออเดอร์ในระบบ", "align": "center", "margin": "lg"}]}
-        })
+        return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
+        
+    # LINE Carousel รองรับสูงสุด 12 Bubbles ต่อหนึ่งข้อความ
     return {"type": "flex", "altText": "สรุปรายการจัดส่งรายวัน", "contents": {"type": "carousel", "contents": bubbles[:12]}}
 
 
@@ -571,11 +564,11 @@ def flex_edit_menu(order_id):
                         "spacing": "xs",
                         "contents": [
                             {
-                                "type": "button", "style": "secondary", "height": "sm",
+                                "type": "button", "style": "primary", "color": "#555555", "height": "sm",
                                 "action": {"type": "postback", "label": "🔄 เปลี่ยนสินค้า", "data": f"edit_swap_menu|{order_id}|{code}|{qty}"}
                             },
                             {
-                                "type": "button", "style": "secondary", "height": "sm",
+                                "type": "button", "style": "primary", "color": "#555555", "height": "sm",
                                 "action": {"type": "postback", "label": "🔢 ปรับจำนวน", "data": f"edit_qty_menu|{order_id}|{code}"}
                             }
                         ]
@@ -620,7 +613,7 @@ def flex_swap_sku_menu(order_id, old_code, qty):
             continue
         p_name = PRODUCTS_DB[code]
         buttons.append({
-            "type": "button", "style": "secondary", "height": "sm",
+            "type": "button", "style": "primary", "color": "#555555", "height": "sm",
             "action": {"type": "postback", "label": f"{p_name}", "data": f"edit_swap_do|{order_id}|{old_code}|{code}|{qty}"}
         })
 
@@ -677,7 +670,7 @@ def flex_qty_menu(order_id, code):
         btns = []
         for item in row:
             btns.append({
-                "type": "button", "style": "secondary", "height": "sm",
+                "type": "button", "style": "primary", "color": "#555555", "height": "sm",
                 "action": {"type": "postback", "label": item["label"], "data": f"edit_qty_set|{order_id}|{code}|{item['val']}"}
             })
         rows_box.append({"type": "box", "layout": "horizontal", "spacing": "xs", "contents": btns})
@@ -709,7 +702,7 @@ def flex_add_item_menu(order_id):
             continue
         p_name = PRODUCTS_DB[code]
         buttons.append({
-            "type": "button", "style": "secondary", "height": "sm",
+            "type": "button", "style": "primary", "color": "#555555", "height": "sm",
             "action": {"type": "postback", "label": f"+ {p_name} (1)", "data": f"edit_qty_set|{order_id}|{code}|1"}
         })
 
@@ -779,13 +772,17 @@ def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     clean_msg = re.sub(r"\s+", "", msg_text).lower()
 
-    # 1. ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาด (ดึงทุกวันในระบบมาแสดงผลเป็น Carousel ซ้ายไปขวา)
+    # 1. ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาด
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
         return
 
-    # 2. ตรวจสอบคำสั่ง "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์วันที่เดี่ยวๆ
+    # 2. ตรวจสอบคำสั่ง "สรุป [วันที่]"
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
     date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
     
@@ -797,7 +794,11 @@ def handle_message(event):
         resolved_dt = resolve_date(d_val, m_val, y_val)
         if resolved_dt:
             day_data = get_specific_day_data(resolved_dt)
-            reply_flex(event["replyToken"], flex_carousel_summary(day_data))
+            msg_obj = flex_carousel_summary(day_data)
+            if msg_obj.get("type") == "text":
+                reply_text(event["replyToken"], msg_obj["text"])
+            else:
+                reply_flex(event["replyToken"], msg_obj)
             return
 
     # 3. คำสั่งขอรายการสินค้า
@@ -813,7 +814,7 @@ def handle_message(event):
         reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
         return
 
-    # 4. บันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
+    # 4. บันทึกออเดอร์ปกติ
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
@@ -860,7 +861,11 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
 
-                    reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+                    msg_obj = flex_carousel_summary(get_all_valid_days_data())
+                    if msg_obj.get("type") == "text":
+                        reply_text(event["replyToken"], msg_obj["text"])
+                    else:
+                        reply_flex(event["replyToken"], msg_obj)
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'สรุป', 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -877,13 +882,21 @@ def handle_postback(event):
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "day_status" and len(parts) == 3:
         new_status = parts[1]
         target_date_str = parts[2]
         update_status_by_date(target_date_str, new_status)
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "day_delete_confirm" and len(parts) == 2:
         target_date_str = parts[1]
@@ -893,15 +906,27 @@ def handle_postback(event):
     elif action == "day_delete_do" and len(parts) == 2:
         target_date_str = parts[1]
         delete_orders_by_date(target_date_str)
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "cancel":
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -924,7 +949,11 @@ def handle_postback(event):
         if ord_rec:
             existing_new_qty = num(ord_rec.get(new_code, 0))
             update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "edit_qty_menu" and len(parts) == 3:
         order_id = int(parts[1])
@@ -937,7 +966,11 @@ def handle_postback(event):
         code = parts[2]
         new_qty = int(parts[3])
         update_db("orders", order_id, {code: new_qty})
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
     elif action == "edit_add_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -959,7 +992,11 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
 
-        reply_flex(event["replyToken"], flex_carousel_summary(all_data))
+        msg_obj = flex_carousel_summary(all_data)
+        if msg_obj.get("type") == "text":
+            reply_text(event["replyToken"], msg_obj["text"])
+        else:
+            reply_flex(event["replyToken"], msg_obj)
 
 
 def reply_text(rt, text):
@@ -972,6 +1009,8 @@ def reply_text(rt, text):
 
 def reply_flex(rt, flex):
     res = requests.post(
+        "https://api.line.me/v2/bot/message/`,
+        # corrected inline endpoint below in standard request
         "https://api.line.me/v2/bot/message/reply",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
         json={"replyToken": rt, "messages": [flex]}
