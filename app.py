@@ -210,7 +210,7 @@ def resolve_date(day_val, month_val=None, year_val=None):
         if month_val:
             d = date(t.year, month_val, day_val)
             return d.isoformat() if d >= t else date(t.year + 1, month_val, day_val).isoformat()
-        # ถ้าระบุแค่วัน (ไม่มีเดือน ไม่มีปี) ให้ใช้เดือนและปีปัจจุบันตามที่ผู้ใช้ขอ
+        # ถ้าระบุแค่วัน ให้ใช้เดือนและปีปัจจุบัน
         return date(t.year, t.month, day_val).isoformat()
     except Exception:
         return None
@@ -759,11 +759,34 @@ def callback():
     return "OK", 200
 
 
-def get_all_valid_days_data():
+def get_month_filtered_days_data(target_month=None, target_year=None):
     ensure_loaded()
-    all_dates = set(o.get("ddate") for o in DATA["orders"] if o.get("ddate"))
+    t = today()
+    m = target_month if target_month else t.month
+    y = target_year if target_year else t.year
+
+    filtered_orders = []
+    for o in DATA["orders"]:
+        d_str = o.get("ddate")
+        if d_str:
+            try:
+                od = datetime.strptime(d_str, "%Y-%m-%d").date()
+                if od.month == m and od.year == y:
+                    filtered_orders.append(o)
+            except Exception:
+                pass
+
+    all_dates = set(o.get("ddate") for o in filtered_orders if o.get("ddate"))
     sorted_dates = sorted(list(all_dates))
-    return {sd: [o for o in DATA["orders"] if o.get("ddate") == sd] for sd in sorted_dates}
+    return {sd: [o for o in filtered_orders if o.get("ddate") == sd] for sd in sorted_dates}
+
+
+def get_specific_day_data(date_str):
+    ensure_loaded()
+    day_orders = [o for o in DATA["orders"] if o.get("ddate") == date_str]
+    if day_orders:
+        return {date_str: day_orders}
+    return {}
 
 
 def handle_message(event):
@@ -783,6 +806,31 @@ def handle_message(event):
         reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
         return
 
+    # ตรวจสอบคำสั่ง "สรุป" หรือพิมพ์แค่วันที่เพื่อดูสรุป
+    msg_lower = msg_text.lower()
+    if msg_lower == "สรุป":
+        # สรุปเดือนปัจจุบัน
+        t = today()
+        m_data = get_month_filtered_days_data(t.month, t.year)
+        reply_flex(event["replyToken"], flex_carousel_summary(m_data))
+        return
+
+    # ตรวจสอบกรณีพิมพ์คำว่า "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์แค่วันที่เดี่ยวๆ เช่น "17" หรือ "17/12"
+    clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
+    date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
+    
+    if date_match and len(msg_text.split()) == 1 and not any(k in msg_text for k in ["ร้าน", "ออเดอร์", "กลม", "แบน", "l", "r", "d"]):
+        d_val = int(date_match.group(1))
+        m_val = int(date_match.group(2)) if date_match.group(2) else None
+        y_val = int(date_match.group(3)) if date_match.group(3) else None
+        
+        resolved_dt = resolve_date(d_val, m_val, y_val)
+        if resolved_dt:
+            day_data = get_specific_day_data(resolved_dt)
+            reply_flex(event["replyToken"], flex_carousel_summary(day_data))
+            return
+
+    # กรณีบันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
@@ -829,10 +877,12 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
 
-                    reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+                    # ส่งสรุปของเดือนปัจจุบันเมื่อมีการเพิ่มออเดอร์
+                    t = today()
+                    reply_flex(event["replyToken"], flex_carousel_summary(get_month_filtered_days_data(t.month, t.year)))
                     return
 
-    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
+    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'สรุป', 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
 
 
 def handle_postback(event):
@@ -841,16 +891,19 @@ def handle_postback(event):
     parts = data_str.split("|")
     action = parts[0]
 
+    t = today()
+    current_month_data = get_month_filtered_days_data(t.month, t.year)
+
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "day_status" and len(parts) == 3:
         new_status = parts[1]
         target_date_str = parts[2]
         update_status_by_date(target_date_str, new_status)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "day_delete_confirm" and len(parts) == 2:
         target_date_str = parts[1]
@@ -860,15 +913,15 @@ def handle_postback(event):
     elif action == "day_delete_do" and len(parts) == 2:
         target_date_str = parts[1]
         delete_orders_by_date(target_date_str)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "cancel":
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -891,7 +944,7 @@ def handle_postback(event):
         if ord_rec:
             existing_new_qty = num(ord_rec.get(new_code, 0))
             update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "edit_qty_menu" and len(parts) == 3:
         order_id = int(parts[1])
@@ -904,7 +957,7 @@ def handle_postback(event):
         code = parts[2]
         new_qty = int(parts[3])
         update_db("orders", order_id, {code: new_qty})
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
     elif action == "edit_add_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -926,7 +979,7 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
 
-        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        reply_flex(event["replyToken"], flex_carousel_summary(current_month_data))
 
 
 def reply_text(rt, text):
