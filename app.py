@@ -6,7 +6,7 @@ import os
 import re
 import threading
 import traceback
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from difflib import get_close_matches
 from zoneinfo import ZoneInfo
 
@@ -23,7 +23,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TZ = ZoneInfo("Asia/Bangkok")
 
-# ฐานข้อมูลรหัสและชื่อทางการ (ใช้ตัวพิมพ์เล็กทั้งหมดเป็นหลัก)
 PRODUCTS_DB = {
     # Beer
     "l": "Lager", "r": "Rose", "d": "Dunkel",
@@ -41,11 +40,8 @@ PRODUCTS_DB = {
     "sojg": "Soju องุ่น", "sojf": "Soju เกรปฟรุ๊ต", "sojs": "Soju สตรอเบอรี่"
 }
 
-# คำค้นหาที่พบบ่อยและชื่อเล่น (Alias Map)
 ALIAS_MAP = {
-    "lager": "l", "larner": "l",
-    "rose": "r",
-    "dunkel": "d",
+    "lager": "l", "larner": "l", "rose": "r", "dunkel": "d",
     "mug": "m", "pine": "p", "jug": "j", "tower": "t",
     "h40": "h40l", "h40lo": "h40l", "ceili": "h40l",
     "counter": "sct", "table": "st",
@@ -55,7 +51,7 @@ ALIAS_MAP = {
     "tendo360": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tend7": "tend7",
     "kacha": "kach", "kach": "kach",
-    "soju": "sojy"
+    "soju": "sojy", "โซจู": "sojy"
 }
 
 CODES = list(PRODUCTS_DB.keys())
@@ -167,43 +163,38 @@ def today(): return datetime.now(TZ).date()
 
 def match_product_token(token):
     clean_token = token.lower()
-    m = re.match(r"^([a-zเ-์]+)(\d+)$", clean_token)
+    m = re.match(r"^([a-zเ-์]+)\s*(\d+)$", clean_token)
     if m:
         name_part = m.group(1)
         qty = int(m.group(2))
         
-        # 1. เช็คจาก Alias หรือ Code ตรงๆ ก่อน
-        code = ALIAS_MAP.get(name_part)
-        if not code and name_part in PRODUCTS_DB:
-            code = name_part
+        alias_code = ALIAS_MAP.get(name_part)
+        if alias_code and alias_code in CODES:
+            return ("exact", alias_code, qty, None)
+        if name_part in CODES:
+            return ("exact", name_part, qty, None)
             
-        if code in CODES:
-            return ("exact", code, qty, None)
-            
-        # 2. ถ้าไม่ตรงเป๊ะ ให้หาคำใกล้เคียง หรือคำที่กำกวม (เช่น "galaxy" ที่ตรงกับทั้ง galf และ galr)
-        matching_codes = []
+        matching_codes = set()
         for c, full_name in PRODUCTS_DB.items():
-            if name_part in full_name.lower() or name_part in c:
-                matching_codes.append(c)
+            if name_part == c or name_part in full_name.lower():
+                matching_codes.add(c)
         
         if len(matching_codes) == 1:
-            return ("exact", matching_codes[0], qty, None)
+            return ("exact", list(matching_codes)[0], qty, None)
         elif len(matching_codes) > 1:
-            # เจอหลายตัวเลือกที่มีความหมายคลุมเครือ ส่งกลับไปให้ผู้ใช้เลือก
-            return ("ambiguous", matching_codes, qty, name_part)
+            return ("ambiguous", list(matching_codes), qty, name_part)
             
-        # 3. ลองใช้ get_close_matches เผื่อสะกดผิด
         matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.6)
         if matches:
             matched_str = matches[0]
             matched_code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str][0] if matched_str in [v.lower() for v in PRODUCTS_DB.values()] else None)
-            if matched_code:
+            if matched_code and matched_code in CODES:
                 return ("exact", matched_code, qty, None)
                 
     return ("none", None, 0, None)
 
 
-def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed_info_msg=None):
+def build_day_bubble(target_date_str, orders_list):
     order_blocks = []
     
     for ord_rec in orders_list:
@@ -293,53 +284,35 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
         }
         order_blocks.append(block)
 
-    body_contents = []
-    
-    if parsed_info_msg:
-        body_contents.append({
-            "type": "box",
-            "layout": "vertical",
-            "paddingAll": "md",
-            "backgroundColor": "#E8F5E9",
-            "contents": [
-                {"type": "text", "text": "📦 รายการที่อัปเดต/บันทึก:", "size": "xs", "color": "#2E7D32", "weight": "bold"},
-                {"type": "text", "text": parsed_info_msg, "size": "sm", "color": "#333333", "wrap": True}
-            ]
-        })
-
-    if suggestion_msg:
-        body_contents.append({
-            "type": "box",
-            "layout": "vertical",
-            "paddingAll": "md",
-            "backgroundColor": "#FFF8E1",
-            "contents": [
-                {"type": "text", "text": "💡 ระบบช่วยเดาคำสั่งซื้อ:", "size": "xs", "color": "#F57C00", "weight": "bold"},
-                {"type": "text", "text": suggestion_msg, "size": "sm", "color": "#333333", "wrap": True}
-            ]
-        })
-
-    body_contents.extend(order_blocks)
-
-    bubble = {
+    return {
         "type": "bubble",
         "size": "mega",
         "header": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "🍻 สรุปรายการจัดส่งประจำวัน", "weight": "bold", "color": "#1DB446", "size": "sm"},
-                {"type": "text", "text": f"วันที่ {dmy(target_date_str)}", "weight": "bold", "size": "xl", "margin": "sm", "color": "#111111"}
+                {"type": "text", "text": f"วันที่ {dmy(target_date_str)}", "weight": "bold", "size": "xl", "color": "#111111"}
             ]
         },
         "body": {
             "type": "box",
             "layout": "vertical",
-            "contents": body_contents
+            "contents": order_blocks
         }
     }
 
-    return {"type": "flex", "altText": f"สรุปออเดอร์วันที่ {dmy(target_date_str)}", "contents": bubble}
+
+def flex_carousel_summary(days_data, extra_bubble=None):
+    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in days_data.items()]
+    if extra_bubble:
+        bubbles.append(extra_bubble)
+    if not bubbles:
+        bubbles.append({
+            "type": "bubble",
+            "size": "mega",
+            "body": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "ไม่มีข้อมูลออเดอร์", "align": "center", "margin": "lg"}]}
+        })
+    return {"type": "flex", "altText": "สรุปรายการจัดส่งรายวัน", "contents": {"type": "carousel", "contents": bubbles}}
 
 
 def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
@@ -375,7 +348,7 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
             ]
         }
     }
-    return {"type": "flex", "altText": "กรุณาเลือกรายการสินค้า", "contents": bubble}
+    return bubble
 
 
 @app.route("/callback", methods=["POST"])
@@ -415,15 +388,24 @@ def handle_message(event):
 
     if msg_text.startswith("สรุป"):
         parts = msg_text.split()
+        days_data = {}
         if len(parts) >= 2:
             date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?$", parts[1])
             if date_match:
-                resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
-                if resolved_dt:
-                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                    if matched: reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched))
-                    else: reply_text(event["replyToken"], f"📅 ไม่พบออเดอร์วันที่ {dmy(resolved_dt)}")
-                    return
+                dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
+                if dt:
+                    matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
+                    if matched: days_data[dt] = matched
+        
+        if not days_data:
+            t = today()
+            for i in range(3):
+                dt = (t - timedelta(days=i)).isoformat()
+                matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
+                days_data[dt] = matched
+                
+        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+        return
 
     parts = msg_text.split()
     if len(parts) >= 3:
@@ -450,31 +432,24 @@ def handle_message(event):
                         prod_full_name = PRODUCTS_DB.get(code_or_list, code_or_list)
                         parsed_details.append(f"• {prod_full_name} ({code_or_list.upper()}): +{qty}")
                     elif m_type == "ambiguous":
-                        # พบคำกำกวม ส่งการ์ดตัวเลือกให้ผู้ใช้กดเลือก
-                        reply_flex(event["replyToken"], flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query))
+                        sel_bubble = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
+                        matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
+                        reply_flex(event["replyToken"], flex_carousel_summary({resolved_dt: matched}, extra_bubble=sel_bubble))
                         return
 
                 if order_items:
                     existing_order = next((o for o in DATA["orders"] if o["shop_id"] == shop_id and o.get("ddate") == resolved_dt), None)
-                    
                     if existing_order:
                         oid = existing_order["id"]
-                        update_payload = {}
-                        for c in CODES:
-                            current_qty = existing_order.get(c, 0)
-                            added_qty = order_items.get(c, 0)
-                            if added_qty > 0:
-                                update_payload[c] = current_qty + added_qty
-                        
-                        if update_payload:
-                            update_db("orders", oid, update_payload)
+                        update_payload = {c: existing_order.get(c, 0) + order_items.get(c, 0) for c in CODES if order_items.get(c, 0) > 0}
+                        if update_payload: update_db("orders", oid, update_payload)
                     else:
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
                         
-                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                    parsed_str = "\n".join(parsed_details) if parsed_details else ""
-                    reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, parsed_info_msg=parsed_str))
+                    t = today()
+                    days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
+                    reply_flex(event["replyToken"], flex_carousel_summary(days_data))
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -487,24 +462,16 @@ def handle_postback(event):
         update_db("orders", order_id, {"status": parts[1]})
         ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
         if ord_rec:
-            matched = [o for o in DATA["orders"] if o.get("ddate") == ord_rec["ddate"]]
-            reply_flex(event["replyToken"], flex_daily_summary(ord_rec["ddate"], matched))
+            t = today()
+            days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
+            reply_flex(event["replyToken"], flex_carousel_summary(days_data))
     elif parts[0] == "delete" and len(parts) == 2:
         order_id = int(parts[1])
-        ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
-        dd = ord_rec["ddate"] if ord_rec else None
         delete_db("orders", order_id)
-        if dd:
-            matched = [o for o in DATA["orders"] if o.get("ddate") == dd]
-            if matched:
-                reply_flex(event["replyToken"], flex_daily_summary(dd, matched))
-                return
-            else:
-                reply_text(event["replyToken"], f"🗑️ ลบออเดอร์เรียบร้อย (ไม่เหลือออเดอร์ในวันนี้แล้ว)")
-                return
-        reply_text(event["replyToken"], f"🗑️ ลบออเดอร์เรียบร้อย")
+        t = today()
+        days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
+        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
     elif parts[0] == "select" and len(parts) == 5:
-        # กดเลือกจากปุ่มตัวเลือกสินค้ากำกวม
         resolved_dt = parts[1]
         shop_id = int(parts[2])
         code = parts[3]
@@ -519,10 +486,9 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
             
-        matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-        p_name = PRODUCTS_DB.get(code, code)
-        parsed_str = f"• เลือก: {p_name} ({code.upper()}): +{qty}"
-        reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, parsed_info_msg=parsed_str))
+        t = today()
+        days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
+        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
 
 
 def reply_text(rt, text):
