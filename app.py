@@ -37,29 +37,67 @@ PRODUCTS_DB = {
 CODES = list(PRODUCTS_DB.keys())
 
 ALIAS_MAP = {
-    "lager": "l", "ลากิอร์": "l", "ลีโอ": "l", "เบียร์": "l", "l": "l",
-    "rose": "r", "โรส": "r", "r": "r",
-    "dunkel": "d", "ดุงเกล": "d", "ดังก์เกล": "d",
-    "mug": "m", "แก้วมัค": "m", "แก้ว": "m",
-    "pine": "p", "ไพน์": "p",
-    "jug": "j", "เหยือก": "j",
-    "tower": "t", "ทาวเวอร์": "t",
-    "h40l": "h40l", "h90": "h90", "h120": "h120",
+    # Draft Beer
+    "lager": "l", "ลาเกอร์": "l", "ลากิอร์": "l", "ลีโอ": "l", "เบียร์": "l", "l": "l",
+    "rose": "r", "โรส": "r", "โรเซ่": "r", "r": "r",
+    "dunkel": "d", "ดุงเกล": "d", "ดังก์เกล": "d", "ดำ": "d", "d": "d",
+    # Glasses & Towers
+    "mug": "m", "แก้วมัค": "m", "แก้ว": "m", "m": "m",
+    "pine": "p", "ไพน์": "p", "ไพนต์": "p", "p": "p",
+    "jug": "j", "เหยือก": "j", "j": "j",
+    "tower": "t", "ทาวเวอร์": "t", "ทาว": "t", "t": "t",
+    # Dispensers & Furniture
+    "h40l": "h40l", "h40": "h40l", "40l": "h40l",
+    "h90": "h90", "h90l": "h90", "90l": "h90",
+    "h120": "h120", "h120l": "h120", "120l": "h120",
     "counter": "sct", "เคาน์เตอร์": "sct", "sct": "sct",
     "table": "st", "โต๊ะ": "st", "st": "st",
-    "astand": "ast", "ast": "ast",
+    # POSM
+    "astand": "ast", "a-stand": "ast", "ast": "ast",
     "standee": "std", "สแตนดี้": "std", "std": "std",
+    "aa5": "aa5", "a5": "aa5", "อะคริลิกa5": "aa5",
+    "aa6": "aa6", "a6": "aa6", "อะคริลิกa6": "aa6",
+    # Galaxy
     "galaxyแบน": "galf", "กาแล็กซี่แบน": "galf", "galf": "galf", "gal-f": "galf", "แบน": "galf",
     "galaxyกลม": "galr", "กาแล็กซี่กลม": "galr", "galr": "galr", "gal-r": "galr", "กลม": "galr",
-    "tendo360": "tend3", "เทนโด360": "tend3", "tend3": "tend3",
-    "tendo700": "tend7", "เทนโด700": "tend7", "tend7": "tend7",
+    # Tendo & Kacha
+    "tendo360": "tend3", "เทนโด360": "tend3", "เทนโดเล็ก": "tend3", "tend3": "tend3",
+    "tendo700": "tend7", "เทนโด700": "tend7", "เทนโดใหญ่": "tend7", "tend7": "tend7",
     "kacha": "kach", "คชา": "kach", "kach": "kach",
-    "sojuyogurt": "sojy", "โซจโยเกิร์ต": "sojy", "sojy": "sojy",
-    "sojupeach": "sojp", "โซจพีช": "sojp", "sojp": "sojp",
-    "sojugrape": "sojg", "โซจองุ่น": "sojg", "sojg": "sojg",
-    "soju grapefruit": "sojf", "sojf": "sojf",
-    "sojustrawberry": "sojs", "โซจสตรอ": "sojs", "sojs": "sojs"
+    # Soju
+    "sojuyogurt": "sojy", "โซจูโยเกิร์ต": "sojy", "โซจโยเกิร์ต": "sojy", "โยเกิร์ต": "sojy", "sojy": "sojy",
+    "sojupeach": "sojp", "โซจูพีช": "sojp", "โซจพีช": "sojp", "พีช": "sojp", "sojp": "sojp",
+    "sojugrape": "sojg", "โซจูองุ่น": "sojg", "โซจองุ่น": "sojg", "องุ่น": "sojg", "sojg": "sojg",
+    "sojugrapefruit": "sojf", "โซจูเกรปฟรุ๊ต": "sojf", "เกรปฟรุ๊ต": "sojf", "sojf": "sojf",
+    "sojustrawberry": "sojs", "โซจูสตรอเบอรี่": "sojs", "โซจสตรอ": "sojs", "สตรอเบอรี่": "sojs", "sojs": "sojs"
 }
+
+# --- AMBIGUOUS GROUPS (คำที่ตรงกับหลาย SKU) ---
+AMBIGUOUS_GROUPS = {
+    "soju": ["sojy", "sojp", "sojg", "sojf", "sojs"],
+    "โซจู": ["sojy", "sojp", "sojg", "sojf", "sojs"],
+    "โซจ": ["sojy", "sojp", "sojg", "sojf", "sojs"],
+    "galaxy": ["galf", "galr"],
+    "กาแล็กซี่": ["galf", "galr"],
+    "gal": ["galf", "galr"],
+    "tendo": ["tend3", "tend7"],
+    "เทนโด": ["tend3", "tend7"],
+    "tend": ["tend3", "tend7"],
+    "hoshizaki": ["h40l", "h90", "h120"],
+    "โฮชิซากิ": ["h40l", "h90", "h120"],
+    "ตู้": ["h40l", "h90", "h120"],
+    "อะคริลิก": ["aa5", "aa6"],
+    "acrylic": ["aa5", "aa6"],
+    "สแตนเลส": ["sct", "st"],
+    "stainless": ["sct", "st"],
+    "เบียร์สด": ["l", "r", "d"],
+    "draft": ["l", "r", "d"],
+    "แก้ว": ["m", "p", "j"]
+}
+
+# อัปเดต "แก้ว" ให้ไปที่กลุ่มตัวเลือก (MUG, PINE, JUG) แทนการเดาเป็น MUG ทันที
+if "แก้ว" in ALIAS_MAP:
+    del ALIAS_MAP["แก้ว"]
 
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
@@ -142,6 +180,205 @@ def send_reply(reply_token, messages):
     res = requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
     print(f"DEBUG Reply Status: {res.status_code}, Body: {res.text}")
 
+# --- SMART INPUT & DISAMBIGUATION PARSER ---
+def find_matching_skus(term):
+    """ค้นหาว่าคำที่พิมพ์ตรงกับ SKU เดียวหรือหลาย SKU (รองรับทั้งตรงตัวและใกล้เคียง)"""
+    t = term.lower().strip()
+    if t in AMBIGUOUS_GROUPS:
+        return AMBIGUOUS_GROUPS[t]
+    if t in ALIAS_MAP:
+        return [ALIAS_MAP[t]]
+    # ค้นหาแบบใกล้เคียง (Substring match)
+    matched = set()
+    for alias, code in ALIAS_MAP.items():
+        if len(t) >= 2 and (t in alias or alias in t):
+            matched.add(code)
+    for code, name in PRODUCTS_DB.items():
+        if len(t) >= 2 and t in name.lower():
+            matched.add(code)
+    return list(matched)
+
+def split_product_qty(token):
+    """แยกชื่อสินค้ากับจำนวนที่พิมพ์ติดกัน เช่น 'โซจู2' -> ('โซจู', 2)"""
+    token_clean = token.lower().strip()
+    if find_matching_skus(token_clean):
+        return token_clean, None
+    m = re.match(r"^([a-zA-Zก-๙\-]+?)(-?\d+)$", token_clean)
+    if m and find_matching_skus(m.group(1)):
+        return m.group(1), int(m.group(2))
+    return token_clean, None
+
+def parse_order_lines(raw_text):
+    lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
+    if not lines:
+        return [], [], ["ไม่พบข้อความคำสั่ง"]
+
+    global_date = today().isoformat()
+    start_idx = 0
+
+    if lines[0].isdigit():
+        global_date = resolve_date(int(lines[0]))
+        start_idx = 1
+
+    parsed_orders = []
+    ambiguous_requests = []
+    errors = []
+
+    for line in lines[start_idx:]:
+        tokens = line.split()
+        if not tokens:
+            continue
+
+        line_date = global_date
+        idx = 0
+
+        if tokens[0].isdigit():
+            line_date = resolve_date(int(tokens[0]))
+            idx = 1
+
+        if idx >= len(tokens):
+            continue
+
+        shop_tokens = []
+        while idx < len(tokens):
+            p_name, _ = split_product_qty(tokens[idx])
+            if find_matching_skus(p_name):
+                break
+            shop_tokens.append(tokens[idx])
+            idx += 1
+
+        if not shop_tokens:
+            errors.append(f"❌ ไม่พบชื่อร้านในบรรทัด: '{line}'")
+            continue
+
+        shop_name = "".join(shop_tokens) if len(shop_tokens) == 1 else " ".join(shop_tokens)
+
+        if idx >= len(tokens):
+            errors.append(f"❌ ร้าน '{shop_name}' ยังไม่ได้ระบุรายการสินค้า")
+            continue
+
+        items = {}
+        while idx < len(tokens):
+            raw_tok = tokens[idx]
+            p_name, attached_qty = split_product_qty(raw_tok)
+            matched_codes = find_matching_skus(p_name)
+
+            if not matched_codes:
+                errors.append(f"❌ ไม่รู้จักสินค้า '{raw_tok}' (ร้าน {shop_name})")
+                idx += 1
+                continue
+
+            if attached_qty is not None:
+                qty = attached_qty
+                idx += 1
+            elif idx + 1 < len(tokens) and re.match(r"^-?\d+$", tokens[idx + 1]):
+                qty = int(tokens[idx + 1])
+                idx += 2
+            else:
+                qty = 1
+                idx += 1
+
+            if len(matched_codes) == 1:
+                code = matched_codes[0]
+                items[code] = items.get(code, 0) + qty
+            else:
+                # พบหลาย SKU ที่ตรงกัน -> เก็บเข้าคิวสร้าง Flex Message ให้เลือก
+                ambiguous_requests.append({
+                    "ddate": line_date,
+                    "shop_name": shop_name,
+                    "keyword": p_name,
+                    "qty": qty,
+                    "candidates": matched_codes
+                })
+
+        if items:
+            parsed_orders.append({
+                "ddate": line_date,
+                "shop_name": shop_name,
+                "items": items
+            })
+
+    return parsed_orders, ambiguous_requests, errors
+
+def build_disambiguation_flex(ambiguous_list):
+    """สร้างการ์ด Flex Message ให้ผู้ใช้กดเลือก SKU ที่ต้องการ"""
+    bubbles = []
+    for req in ambiguous_list[:10]:
+        shop_obj = get_or_create_shop(req["shop_name"])
+        shop_id = shop_obj["id"] if shop_obj else ""
+        shop_display = shop_obj["name"] if shop_obj else req["shop_name"]
+        ddate = req["ddate"]
+        qty = req["qty"]
+        keyword = req["keyword"]
+
+        buttons = []
+        for code in req["candidates"]:
+            p_name = PRODUCTS_DB.get(code, code)
+            buttons.append({
+                "type": "button",
+                "style": "primary",
+                "height": "sm",
+                "color": "#06C755",
+                "margin": "sm",
+                "action": {
+                    "type": "postback",
+                    "label": f"{p_name} ({qty})",
+                    "data": f"action=pick_sku&sid={shop_id}&date={ddate}&code={code}&qty={qty}"
+                }
+            })
+
+        bubbles.append({
+            "type": "bubble",
+            "size": "kilo",
+            "header": {
+                "type": "box",
+                "layout": "vertical",
+                "backgroundColor": "#FF9900",
+                "contents": [
+                    {"type": "text", "text": "🤔 เลือก SKU สินค้า", "weight": "bold", "size": "sm", "color": "#ffffff"}
+                ]
+            },
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": f"{shop_display} ({dmy(ddate)})", "weight": "bold", "size": "md", "color": "#111111"},
+                    {"type": "text", "text": f"คำว่า \"{keyword}\" จำนวน {qty} ตรงกับหลายรายการ กรุณาเลือก:", "size": "xs", "color": "#555555", "wrap": True, "margin": "xs"},
+                    {"type": "box", "layout": "vertical", "margin": "md", "contents": buttons}
+                ]
+            }
+        })
+
+    return {
+        "type": "flex",
+        "altText": "กรุณาเลือก SKU สินค้าที่ต้องการ",
+        "contents": {
+            "type": "carousel",
+            "contents": bubbles
+        }
+    }
+
+def upsert_order_items(shop_id, resolved_dt, items_dict):
+    """บันทึกหรืออัปเดตรายการสินค้าลงตาราง orders"""
+    _, current_orders = fetch_fresh_data()
+    existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
+
+    if existing:
+        oid = existing["id"]
+        update_payload = {}
+        for code, delta_qty in items_dict.items():
+            curr_q = num(existing.get(code, 0))
+            new_q = max(0, curr_q + delta_qty)
+            update_payload[code] = new_q
+        supabase.table("orders").update(update_payload).eq("id", oid).execute()
+    else:
+        insert_payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit"}
+        for code, qty in items_dict.items():
+            if qty > 0:
+                insert_payload[code] = qty
+        if len(insert_payload) > 3:
+            supabase.table("orders").insert(insert_payload).execute()
+
 def build_summary_carousel():
     try:
         shops, orders = fetch_fresh_data()
@@ -158,8 +395,6 @@ def build_summary_carousel():
         bubbles = []
         for date_str, date_orders in sorted(grouped_by_date.items()):
             shop_contents = []
-            
-            # คำนวณยอดรวม (Grand Total) ของสินค้าแต่ละชนิดในวันนั้นๆ
             date_totals = {code: 0 for code in CODES}
 
             for idx, o in enumerate(date_orders):
@@ -189,7 +424,6 @@ def build_summary_carousel():
                 if idx > 0:
                     shop_contents.append({"type": "separator", "margin": "lg"})
 
-                # รายละเอียดแต่ละร้าน พร้อมปุ่มเปลี่ยนสเตตัส
                 shop_contents.extend([
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
@@ -262,7 +496,6 @@ def build_summary_carousel():
                     }
                 ])
 
-            # สร้างรายการสรุปยอดรวม (Grand Total Rows) ของวันนั้นๆ
             total_rows = []
             for code, total_qty in date_totals.items():
                 if total_qty > 0:
@@ -399,7 +632,15 @@ def handle_postback(event):
     action = params.get("action")
     
     try:
-        if action == "status":
+        if action == "pick_sku":
+            shop_id = params.get("sid")
+            target_date = params.get("date")
+            code = params.get("code")
+            qty = num(params.get("qty"))
+            if shop_id and target_date and code:
+                upsert_order_items(shop_id, target_date, {code: qty})
+
+        elif action == "status":
             order_id = params.get("id")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
@@ -428,23 +669,24 @@ def handle_message(event):
     text = msg.get("text", "").strip()
     reply_token = event["replyToken"]
 
-    if text in ["สรุป", "ยอด", "list"]:
+    if text.lower() in ["สรุป", "ยอด", "list"]:
         res_obj = build_summary_carousel()
         send_reply(reply_token, res_obj)
         return
 
-    if text in ["คู่มือ", "ช่วยเหลือ", "help"]:
+    if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
-            "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งแบบใช้งวดวันนี้ (ง่ายที่สุด):\n"
-            "พิมพ์ [ชื่อร้าน] [สินค้า] [จำนวน]\n"
-            "เช่น: เจ๊โน galf 2\n\n"
-            "2️⃣ สั่งแบบระบุวัน:\n"
-            "พิมพ์ [วัน] [ชื่อร้าน] [สินค้า] [จำนวน]\n"
-            "เช่น: 17 เจ๊โน galf 2\n\n"
-            "3️⃣ คำสั่งอื่นๆ:\n"
-            "- พิมพ์ 'สรุป' เพื่อดูการ์ดออเดอร์ทั้งหมด\n"
-            "- พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้า"
+            "📖 วิธีการสั่งออเดอร์:\n\n"
+            "1️⃣ สั่งแบบเจาะจง:\n"
+            "• เจ๊โน แบน 2 กลม 1 l3\n\n"
+            "2️⃣ สั่งแบบระบุหมวดหมู่ (บอทจะเด้งปุ่มให้เลือก SKU):\n"
+            "• เจ๊โน โซจู 2\n"
+            "• เจ๊โน galaxy 1\n\n"
+            "3️⃣ สั่งระบุวันที่ / หลายร้านพร้อมกัน:\n"
+            "18\n"
+            "เจ๊โน แบน 2\n"
+            "ครัวบ้านสวน l 3 r 2\n\n"
+            "📌 พิมพ์ 'สรุป' ดูยอด | พิมพ์ 'ดูรหัส' ดูชื่อย่อสินค้า"
         )
         send_reply(reply_token, {"type": "text", "text": help_text})
         return
@@ -454,64 +696,36 @@ def handle_message(event):
         send_reply(reply_token, {"type": "text", "text": f"📋 รหัส/คำย่อสินค้า:\n{product_list}"})
         return
 
-    parts = text.split()
-    
-    if len(parts) >= 2 and not parts[0].isdigit():
-        resolved_dt = today().isoformat()
-        shop_name = parts[0]
-        raw_product = parts[1].lower()
-        qty = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 1
+    parsed_orders, ambiguous_requests, errors = parse_order_lines(text)
 
-        process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty)
+    if not parsed_orders and not ambiguous_requests:
+        err_msg = "\n".join(errors) if errors else "💡 ไม่เข้าใจคำสั่ง พิมพ์ 'คู่มือ' เพื่อดูวิธีสั่งซื้อครับ"
+        send_reply(reply_token, {"type": "text", "text": err_msg})
         return
 
-    if len(parts) >= 3 and parts[0].isdigit():
-        d_val = int(parts[0])
-        resolved_dt = resolve_date(d_val)
-        shop_name = parts[1]
-        raw_product = parts[2].lower()
-        qty = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 1
+    # บันทึกรายการที่ชัดเจนทันที
+    for order_data in parsed_orders:
+        shop = get_or_create_shop(order_data["shop_name"])
+        if not shop:
+            errors.append(f"❌ ไม่สามารถสร้างหรือหาร้าน '{order_data['shop_name']}' ได้")
+            continue
+        try:
+            upsert_order_items(shop["id"], order_data["ddate"], order_data["items"])
+        except Exception as db_err:
+            print(f"❌ DB Error: {db_err}")
+            errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
 
-        process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty)
-        return
+    messages = []
+    if errors:
+        messages.append({"type": "text", "text": "⚠️ แจ้งเตือนบางรายการ:\n" + "\n".join(errors)})
 
-    send_reply(reply_token, {"type": "text", "text": "💡 ไม่เข้าใจคำสั่ง พิมพ์ 'คู่มือ' เพื่อดูวิธีสั่งซื้อครับ"})
+    # ถ้ามีรายการที่กำกวม ให้ส่ง Flex Message เลือก SKU (เมื่อกดเลือกแล้วจะเด้งไปหน้าสรุป)
+    if ambiguous_requests:
+        messages.append(build_disambiguation_flex(ambiguous_requests))
+    else:
+        messages.append(build_summary_carousel())
 
-def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
-    shop = get_or_create_shop(shop_name)
-    if not shop:
-        send_reply(reply_token, {"type": "text", "text": f"❌ ไม่สามารถสร้างหรือหาร้าน '{shop_name}' ในระบบได้"})
-        return
-        
-    shop_id = shop["id"]
-
-    code = ALIAS_MAP.get(raw_product)
-    if not code:
-        send_reply(reply_token, {
-            "type": "text", 
-            "text": f"❌ ไม่พบสินค้า '{raw_product}' พิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าทั้งหมดครับ"
-        })
-        return
-
-    _, current_orders = fetch_fresh_data()
-    existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
-    
-    try:
-        if existing:
-            oid = existing["id"]
-            curr_q = num(existing.get(code, 0))
-            supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
-        else:
-            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
-            supabase.table("orders").insert(payload).execute()
-
-    except Exception as db_err:
-        print(f"❌ DB Error: {db_err}")
-        send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล: {db_err}"})
-        return
-
-    res_obj = build_summary_carousel()
-    send_reply(reply_token, res_obj)
+    send_reply(reply_token, messages)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
