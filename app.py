@@ -157,6 +157,21 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
+        # ตรวจสอบวันที่ขึ้นต้นบรรทัด (เช่น 18 หรือ 19)
+        order_date = get_bangkok_date_str()
+        if re.match(r"^\d{1,2}$", tokens[0]):
+            day_val = int(tokens[0])
+            if 1 <= day_val <= 31:
+                try:
+                    now_bkk = datetime.now(TZ)
+                    order_date = now_bkk.replace(day=day_val).strftime("%Y-%m-%d")
+                    tokens.pop(0)
+                except ValueError:
+                    pass
+
+        if not tokens:
+            continue
+
         first_item_idx = -1
         for i, token in enumerate(tokens):
             clean_tok = token.lower().strip()
@@ -204,6 +219,7 @@ def parse_order_text(raw_text):
             
         if items:
             parsed_items_list.append({
+                "ddate": order_date,
                 "shop_name": shop_name,
                 "status": status,
                 "items": items
@@ -372,13 +388,17 @@ def callback():
                     send_reply(reply_token, [{"type": "text", "text": "คู่มือการใช้งาน...\n1. พิมพ์ชื่อร้านและรายการสินค้า\n2. ใส่สถานะต่อท้ายได้ทั้งไทยและอังกฤษ เช่น order, slip"}])
                     continue
                 
+                if text in ["สรุป", "รายงาน"]:
+                    send_reply(reply_token, [build_carousel(chat_id)])
+                    continue
+                
                 parsed_list, errors = parse_order_text(text)
                 for entry in parsed_list:
                     shop = get_or_create_shop(entry["shop_name"])
                     if shop:
                         payload = {
                             "chat_id": chat_id, "chat_type": chat_type, "shop_id": shop["id"],
-                            "ddate": get_bangkok_date_str(), "status": entry["status"]
+                            "ddate": entry["ddate"], "status": entry["status"]
                         }
                         for k, v in entry["items"].items(): payload[k] = v
                         supabase.table("orders").insert(payload).execute()
