@@ -99,9 +99,6 @@ def load():
         print(f"❌ Load Error: {e}")
 
 
-INT_COLS = {"id", "shop_id", *CODES}
-
-
 def add(tab, d):
     payload = {k: v for k, v in d.items() if k != "_row"}
     if "id" in payload: payload.pop("id")
@@ -303,14 +300,18 @@ def build_day_bubble(target_date_str, orders_list):
 
 
 def flex_carousel_summary(days_data, extra_bubble=None):
-    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in days_data.items()]
+    # กรองเอาเฉพาะวันที่มีออเดอร์จริงๆ หรือมี extra_bubble (การ์ดเลือกสินค้า)
+    filtered_days = {d_str: o_list for d_str, o_list in days_data.items() if len(o_list) > 0}
+    
+    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in filtered_days.items()]
     if extra_bubble:
         bubbles.append(extra_bubble)
+        
     if not bubbles:
         bubbles.append({
             "type": "bubble",
             "size": "mega",
-            "body": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "ไม่มีข้อมูลออเดอร์", "align": "center", "margin": "lg"}]}
+            "body": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "ไม่มีข้อมูลออเดอร์ในช่วงนี้", "align": "center", "margin": "lg"}]}
         })
     return {"type": "flex", "altText": "สรุปรายการจัดส่งรายวัน", "contents": {"type": "carousel", "contents": bubbles}}
 
@@ -371,6 +372,18 @@ def callback():
     return "OK", 200
 
 
+def get_recent_days_data():
+    # ดึงข้อมูลย้อนหลัง 7 วันเพื่อให้ครอบคลุมวันที่มีออเดอร์
+    t = today()
+    days_data = {}
+    for i in range(7):
+        dt = (t - timedelta(days=i)).isoformat()
+        matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
+        if matched:
+            days_data[dt] = matched
+    return days_data
+
+
 def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     
@@ -398,11 +411,7 @@ def handle_message(event):
                     if matched: days_data[dt] = matched
         
         if not days_data:
-            t = today()
-            for i in range(3):
-                dt = (t - timedelta(days=i)).isoformat()
-                matched = [o for o in DATA["orders"] if o.get("ddate") == dt]
-                days_data[dt] = matched
+            days_data = get_recent_days_data()
                 
         reply_flex(event["replyToken"], flex_carousel_summary(days_data))
         return
@@ -423,18 +432,18 @@ def handle_message(event):
                 
                 shop_id = get_or_create_shop(shop_name)
                 order_items = {}
-                parsed_details = []
                 
                 for token in tokens:
                     m_type, code_or_list, qty, orig_query = match_product_token(token)
                     if m_type == "exact":
                         order_items[code_or_list] = order_items.get(code_or_list, 0) + qty
-                        prod_full_name = PRODUCTS_DB.get(code_or_list, code_or_list)
-                        parsed_details.append(f"• {prod_full_name} ({code_or_list.upper()}): +{qty}")
                     elif m_type == "ambiguous":
                         sel_bubble = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
                         matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                        reply_flex(event["replyToken"], flex_carousel_summary({resolved_dt: matched}, extra_bubble=sel_bubble))
+                        days_data = get_recent_days_data()
+                        if resolved_dt not in days_data and matched:
+                            days_data[resolved_dt] = matched
+                        reply_flex(event["replyToken"], flex_carousel_summary(days_data, extra_bubble=sel_bubble))
                         return
 
                 if order_items:
@@ -447,9 +456,7 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
                         
-                    t = today()
-                    days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
-                    reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+                    reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -460,17 +467,11 @@ def handle_postback(event):
     if parts[0] == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
-        if ord_rec:
-            t = today()
-            days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
-            reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
     elif parts[0] == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        t = today()
-        days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
-        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
     elif parts[0] == "select" and len(parts) == 5:
         resolved_dt = parts[1]
         shop_id = int(parts[2])
@@ -486,9 +487,7 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
             
-        t = today()
-        days_data = { (t - timedelta(days=i)).isoformat(): [o for o in DATA["orders"] if o.get("ddate") == (t - timedelta(days=i)).isoformat()] for i in range(3) }
-        reply_flex(event["replyToken"], flex_carousel_summary(days_data))
+        reply_flex(event["replyToken"], flex_carousel_summary(get_recent_days_data()))
 
 
 def reply_text(rt, text):
