@@ -39,11 +39,11 @@ CODES = list(PRODUCTS_DB.keys())
 ALIAS_MAP = {
     "lager": "l", "ลากิอร์": "l", "ลีโอ": "l", "เบียร์": "l", "l": "l",
     "rose": "r", "โรส": "r", "r": "r",
-    "dunkel": "d", "ดุงเกล": "ดังก์เกล": "d", "d": "d",
-    "mug": "m", "แก้วมัค": "แก้ว": "m", "m": "m",
-    "pine": "p", "ไพน์": "p", "p": "p",
-    "jug": "j", "เหยือก": "j", "j": "j",
-    "tower": "t", "ทาวเวอร์": "t", "t": "t",
+    "dunkel": "d", "ดุงเกล": "d", "ดังก์เกล": "d",
+    "mug": "m", "แก้วมัค": "m", "แก้ว": "m",
+    "pine": "p", "ไพน์": "p",
+    "jug": "j", "เหยือก": "j",
+    "tower": "t", "ทาวเวอร์": "t",
     "h40l": "h40l", "h90": "h90", "h120": "h120",
     "counter": "sct", "เคาน์เตอร์": "sct", "sct": "sct",
     "table": "st", "โต๊ะ": "st", "st": "st",
@@ -147,7 +147,6 @@ def build_summary_carousel():
     if not orders:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
 
-    # จัดกลุ่มออเดอร์ตามวันที่ (Group orders by ddate)
     grouped_by_date = {}
     for o in orders:
         dt = o.get("ddate", "ไม่ระบุ")
@@ -156,7 +155,6 @@ def build_summary_carousel():
         grouped_by_date[dt].append(o)
 
     bubbles = []
-    # วนลูปสร้าง Bubble แยกตามแต่ละวัน
     for date_str, date_orders in sorted(grouped_by_date.items()):
         shop_contents = []
         
@@ -182,7 +180,6 @@ def build_summary_carousel():
             if not item_rows:
                 item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
 
-            # เพิ่มเส้นกั้นระหว่างร้าน (ถ้าร้านไม่ใช่ร้านแรกในวันนั้น)
             if idx > 0:
                 shop_contents.append({"type": "separator", "margin": "lg"})
 
@@ -245,8 +242,6 @@ def handle_message(event):
     text = msg.get("text", "").strip()
     reply_token = event["replyToken"]
 
-    print(f"📥 Received Text: {text}")
-
     if text in ["สรุป", "ยอด", "list"]:
         res_obj = build_summary_carousel()
         send_reply(reply_token, res_obj)
@@ -275,7 +270,6 @@ def handle_message(event):
 
     parts = text.split()
     
-    # รูปแบบที่ 1: [ชื่อร้าน] [สินค้า] [จำนวน] (ใช้วันนี้อัตโนมัติ)
     if len(parts) >= 2 and not parts[0].isdigit():
         resolved_dt = today().isoformat()
         shop_name = parts[0]
@@ -285,7 +279,6 @@ def handle_message(event):
         process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty)
         return
 
-    # รูปแบบที่ 2: [วัน] [ชื่อร้าน] [สินค้า] [จำนวน]
     if len(parts) >= 3 and parts[0].isdigit():
         d_val = int(parts[0])
         resolved_dt = resolve_date(d_val)
@@ -299,8 +292,6 @@ def handle_message(event):
     send_reply(reply_token, {"type": "text", "text": "💡 ไม่เข้าใจคำสั่ง พิมพ์ 'คู่มือ' เพื่อดูวิธีสั่งซื้อครับ"})
 
 def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
-    print(f"🛒 Processing Order -> Date: {resolved_dt}, Shop: {shop_name}, Product: {raw_product}, Qty: {qty}")
-
     shop = get_or_create_shop(shop_name)
     if not shop:
         send_reply(reply_token, {"type": "text", "text": f"❌ ไม่สามารถสร้างหรือหาร้าน '{shop_name}' ในระบบได้"})
@@ -340,10 +331,9 @@ def process_order(event, reply_token, resolved_dt, shop_name, raw_product, qty):
             supabase.table("orders").insert(payload).execute()
 
         supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
-        print("✅ Order Saved & Balance Updated Successfully")
 
     except Exception as db_err:
-        print(f"❌ Supabase Write Error: {db_err}")
+        print(f"❌ DB Error: {db_err}")
         send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการบันทึกข้อมูล: {db_err}"})
         return
 
