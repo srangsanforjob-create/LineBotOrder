@@ -447,7 +447,7 @@ def handle_postback(event):
         dd = ord_rec["ddate"] if ord_rec else None
         delete_db("orders", order_id)
         if dd:
-            matched = [o for o in DATA["orders"] if o.get("ddate"] == dd]
+            matched = [o for o in DATA["orders"] if o.get("ddate") == dd]
             if matched:
                 reply_flex(event["replyToken"], flex_daily_summary(dd, matched))
                 return
