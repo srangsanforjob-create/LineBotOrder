@@ -109,10 +109,8 @@ def num(v):
         return 0
 
 def fetch_fresh_data(chat_id, target_date=None):
-    """ดึงข้อมูลเฉพาะของแชทนั้นๆ เท่านั้น (แยกส่วนตัวและกลุ่ม)"""
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        
         query = supabase.table("orders").select("*").eq("chat_id", chat_id)
         if target_date:
             query = query.eq("ddate", target_date)
@@ -683,9 +681,8 @@ def callback():
         events = json.loads(body).get("events", [])
         for event in events:
             source = event.get("source", {})
-            chat_type = source.get("type", "user") # "user", "group", หรือ "room"
+            chat_type = source.get("type", "user")
             
-            # กำหนด chat_id ให้แยกตามแหล่งที่มาของข้อความอย่างเด็ดขาด
             if chat_type == "group":
                 chat_id = source.get("groupId")
             elif chat_type == "room":
@@ -733,6 +730,7 @@ def handle_postback(event, default_chat_id):
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
+            # แก้ไขให้ลบโดยระบุ chat_id และ ddate ร่วมกันอย่างแม่นยำ
             supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
             
     except Exception as e:
