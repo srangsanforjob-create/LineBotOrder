@@ -90,6 +90,17 @@ for cat, items in PRODUCT_CATEGORIES.items():
 
 CODES = list(PRODUCT_CODES.keys())
 
+STATUS_MAP = {
+    "order": "ordered",
+    "ordered": "ordered",
+    "slipt": "slip",
+    "slip": "slip",
+    "over": "overdue",
+    "overdue": "overdue",
+    "limit": "short",
+    "short": "short"
+}
+
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order"),
     "ordered": ("✅", "Order แล้ว"),
@@ -102,9 +113,7 @@ AUTO_MATCH = 0.85
 
 app = Flask(__name__)
 LOCK = threading.Lock()
-
 USER_SESSIONS = {}
-
 DATA = {"shops": [], "orders": [], "pending": []}
 
 
@@ -169,7 +178,7 @@ def update(tab, d):
 def remove(tab, d):
     oid = d.get("id")
     supabase.table(tab).delete().eq("id", oid).execute()
-    DATA[tab] = [x for x in DATA[tab] if x.get("id") != oid]
+    DATA[tab] = [x for x in DATA[tab] if x.get("id"] != oid]
 
 
 def shop_by_id(sid):
@@ -208,8 +217,52 @@ def dmy(iso):
     return f"{int(d):02d}/{int(m):02d}/{y}"
 
 
-def codes_text(o):
-    return " ".join(f"{c}{o[c]}" for c in CODES if o.get(c, 0))
+def resolve_date(day_val, month_val=None, year_val=None):
+    t = today()
+    try:
+        if year_val:
+            if year_val < 100:
+                year_val += 2000
+            if month_val:
+                return date(year_val, month_val, day_val).isoformat()
+            return date(t.year, month_val or t.month, day_val).isoformat()
+        
+        if month_val:
+            d = date(t.year, month_val, day_val)
+            return d.isoformat() if d >= t else date(t.year + 1, month_val, day_val).isoformat()
+        
+        # ใส่มาแค่เลขวันเดียว
+        if day_val >= t.day:
+            return date(t.year, t.month, day_val).isoformat()
+        else:
+            # ถ้าวันน้อยกว่าปัจจุบัน ปัดไปเดือนถัดไป
+            y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
+            return date(y, m, day_val).isoformat()
+    except ValueError:
+        return None
+
+
+def get_or_create_shop(name):
+    dn = display_name(name)
+    s = next((s for s in DATA["shops"] if s["name"] == dn), None)
+    if s:
+        return s["id"]
+    cands = candidates(name)
+    if cands and cands[0][0] >= AUTO_MATCH:
+        return cands[0][1]["id"]
+    new_shop = add("shops", {"name": dn, "aliases": ""})
+    return new_shop["id"]
+
+
+def candidates(name):
+    n = norm(name)
+    out = []
+    for s in DATA["shops"]:
+        names = [norm(s["name"])] + [a for a in s["aliases"].split("|") if a]
+        best = max(SequenceMatcher(None, n, x).ratio() for x in names)
+        out.append((best, s))
+    out.sort(key=lambda t: -t[0])
+    return out
 
 
 def get_session(user_id):
@@ -389,12 +442,87 @@ def handle_message(event):
     user_id = event["source"]["userId"]
     msg_text = event["message"].get("text", "").strip()
     
-    # ยืดหยุ่น: หากพิมพ์ "เมนู" ให้เรียกหน้าเลือกสินค้า หากพิมพ์ข้อความอื่นๆ สามารถนำไปประมวลผลต่อได้ทันที
-    if msg_text == "เมนู":
+    # 1. เช็คคำสั่งเรียกดูวิธีใช้งาน
+    if msg_text.lower() == "ขอinput" or msg_text == "ขอInput":
+        help_text = (
+            "📖 วิธีการใช้งานและ Input คำสั่ง:\n\n"
+            "• รูปแบบทั่วไป (ยืดหยุ่น เว้นวรรค/พิมพ์เล็กใหญ่ได้):\n"
+            "[วันที่] [ชื่อร้าน] [รหัสสินค้าและจำนวน] [Status]\n\n"
+            "ตัวอย่างเช่น:\n"
+            "11/11 ABC L2 R3 order\n"
+            "หรือใส่แค่วันที่ เช่น '11 ABC L2 order' (ถ้าวันที่น้อยกว่าปัจจุบัน ระบบจะปัดเป็นเดือนถัดไป)\n\n"
+            "• สถานะที่รองรับ (Status):\n"
+            "- order / ordered = Order แล้ว\n"
+            "- slipt / slip = อัปสลิปแล้ว\n"
+            "- over / overdue = Overdue\n"
+            "- limit / short = วงเงินไม่พอ\n\n"
+            "• พิมพ์ 'เมนู' เพื่อเปิดหน้าเลือกสินค้าแบบปุ่มกด"
+        )
+        reply_text(event["replyToken"], help_text)
+        return
+
+    # 2. เช็คคำสั่งเปิดเมนู
+    if msg_text.lower() == "เมนู":
         reply_flex(event["replyToken"], flex_category_menu(user_id))
-    else:
-        # รองรับการพิมพ์ข้อความทั่วไปหรือชื่อร้าน/รายการสินค้า
-        reply_text(event["replyToken"], f"รับข้อความ: {msg_text}")
+        return
+
+    # 3. ประมวลผลข้อความสั่งซื้อแบบยืดหยุ่น (วันที่ ร้าน สินค้า จำนวน Status)
+    parts = msg_text.split()
+    if len(parts) >= 3:
+        # พยายามแกะวันที่จากก้อนแรก
+        date_part = parts[0]
+        date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{2,4}))?$", date_part)
+        
+        if date_match:
+            d_val = int(date_match.group(1))
+            m_val = int(date_match.group(2)) if date_match.group(2) else None
+            y_val = int(date_match.group(3)) if date_match.group(3) else None
+            
+            resolved_dt = resolve_date(d_val, m_val, y_val)
+            if resolved_dt:
+                # เริ่มแกะชื่อร้านและรายการสินค้า
+                shop_name = parts[1]
+                item_tokens = parts[2:]
+                
+                # ตรวจสอบว่า token สุดท้ายเป็น status หรือไม่
+                status_key = "pending"
+                if item_tokens:
+                    last_token = item_tokens[-1].lower()
+                    if last_token in STATUS_MAP:
+                        status_key = STATUS_MAP[last_token]
+                        item_tokens.pop() # ตัด status ออกจากรายการสินค้า
+                
+                # แยกจำนวนสินค้าและรหัสสินค้า (เช่น L2, R3)
+                order_items = {}
+                for token in item_tokens:
+                    m_item = re.match(r"^([a-zA-Z0-9_-]+?)(\d+)$", token)
+                    if m_item:
+                        code = m_item.group(1)
+                        qty = int(m_item.group(2))
+                        # ตรวจสอบรหัสสินค้า (รองรับ alias ด้วย)
+                        if code in EXTRA_ALIASES:
+                            code = EXTRA_ALIASES[code]
+                        if code in CODES or code in PRODUCT_CODES:
+                            order_items[code] = order_items.get(code, 0) + qty
+                
+                if order_items:
+                    shop_id = get_or_create_shop(shop_name)
+                    payload = {
+                        "shop_id": shop_id,
+                        "ddate": resolved_dt,
+                        "status": status_key,
+                        **order_items
+                    }
+                    inserted = add("orders", payload)
+                    
+                    # ตอบกลับสำเร็จ
+                    sh_obj = shop_by_id(shop_id)
+                    sh_display = sh_obj["name"] if sh_obj else shop_name
+                    reply_text(event["replyToken"], f"✅ บันทึกออเดอร์ {sh_display} วันที่ {dmy(resolved_dt)} สำเร็จ!")
+                    return
+
+    # ถ้าไม่ตรงเงื่อนไขใดๆ แจ้งเตือนเบื้องต้น
+    reply_text(event["replyToken"], f"พิมพ์ 'ขอInput' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'เมนู' เพื่อเปิดฟอร์มสั่งสินค้าครับ")
 
 
 def handle_postback(event):
