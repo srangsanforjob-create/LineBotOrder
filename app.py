@@ -779,7 +779,7 @@ def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     clean_msg = re.sub(r"\s+", "", msg_text).lower()
 
-    # [สำคัญ] 1. ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาด (รองรับช่องว่างหรืออักขระซ่อน)
+    # 1. ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาด (ดึงทุกวันในระบบมาแสดงผลเป็น Carousel ซ้ายไปขวา)
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
         reply_flex(event["replyToken"], flex_carousel_summary(all_data))
