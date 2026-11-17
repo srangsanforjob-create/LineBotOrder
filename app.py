@@ -459,7 +459,6 @@ def flex_carousel_summary(days_data):
     if not bubbles:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
-    # หั่นแบ่ง Carousel ไม่ให้เกิน 6 การ์ดต่อข้อความ เพื่อป้องกัน Error "Too large" จาก LINE API
     chunked_carousels = []
     for i in range(0, len(bubbles), 6):
         chunk = bubbles[i:i+6]
@@ -474,13 +473,27 @@ def flex_carousel_summary(days_data):
     return chunked_carousels
 
 
-def reply_multi_messages(rt, messages_list):
-    # ส่งข้อความหลายรายการ (รองรับกรณี Carousel ถูกแบ่งหลายก้อน)
-    requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-        json={"replyToken": rt, "messages": messages_list[:5]} # LINE รองรับสูงสุด 5 ข้อความต่อ 1 reply
-    )
+def send_reply_response(rt, res_obj):
+    if isinstance(res_obj, list):
+        # กรณีส่งเป็นลิสต์ของ Flex Carousel หลายก้อน (แบ่งไม่เกิน 5 ข้อความต่อ 1 reply)
+        requests.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+            json={"replyToken": rt, "messages": res_obj[:5]}
+        )
+    elif isinstance(res_obj, dict) and res_obj.get("type") == "text":
+        requests.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+            json={"replyToken": rt, "messages": [{"type": "text", "text": res_obj["text"]}]}
+        )
+    else:
+        # กรณี Flex Message ปกติแบบเดี่ยว
+        requests.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+            json={"replyToken": rt, "messages": [res_obj]}
+        )
 
 
 def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
@@ -771,12 +784,7 @@ def handle_message(event):
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
         res_obj = flex_carousel_summary(all_data)
-        if isinstance(res_obj, dict) and res_obj.get("type") == "text":
-            reply_text(event["replyToken"], res_obj["text"])
-        elif isinstance(res_obj, list):
-            reply_multi_messages(event["replyToken"], res_obj)
-        else:
-            reply_flex(event["replyToken"], res_obj)
+        send_reply_response(event["replyToken"], res_obj)
         return
 
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
@@ -791,12 +799,7 @@ def handle_message(event):
         if resolved_dt:
             day_data = get_specific_day_data(resolved_dt)
             res_obj = flex_carousel_summary(day_data)
-            if isinstance(res_obj, dict) and res_obj.get("type") == "text":
-                reply_text(event["replyToken"], res_obj["text"])
-            elif isinstance(res_obj, list):
-                reply_multi_messages(event["replyToken"], res_obj)
-            else:
-                reply_flex(event["replyToken"], res_obj)
+            send_reply_response(event["replyToken"], res_obj)
             return
 
     if any(k in clean_msg for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
@@ -804,11 +807,11 @@ def handle_message(event):
         for code, name in PRODUCTS_DB.items():
             product_list_str += f"• [{code.upper()}] {name}\n"
         product_list_str += "\n💡 ตัวอย่าง: 18 ข้าวใหม่ galaxyแบน 2"
-        reply_text(event["replyToken"], product_list_str)
+        send_reply_response(event["replyToken"], {"type": "text", "text": product_list_str})
         return
 
     if clean_msg == "ขอinput":
-        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
+        send_reply_response(event["replyToken"], {"type": "text", "text": "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2"})
         return
 
     parts = msg_text.split()
@@ -843,7 +846,7 @@ def handle_message(event):
                         order_items[code_or_list] = order_items.get(code_or_list, 0) + qty
                     elif m_type == "ambiguous":
                         sel_flex = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
-                        reply_flex(event["replyToken"], sel_flex)
+                        send_reply_response(event["replyToken"], sel_flex)
                         return
 
                 if order_items:
@@ -859,15 +862,10 @@ def handle_message(event):
                         add("orders", payload)
 
                     res_obj = flex_carousel_summary(get_all_valid_days_data())
-                    if isinstance(res_obj, dict) and res_obj.get("type") == "text":
-                        reply_text(event["replyToken"], res_obj["text"])
-                    elif isinstance(res_obj, list):
-                        reply_multi_messages(event["replyToken"], res_obj)
-                    else:
-                        reply_flex(event["replyToken"], res_obj)
+                    send_reply_response(event["replyToken"], res_obj)
                     return
 
-    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'สรุป', 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
+    send_reply_response(event["replyToken"], {"type": "text", "text": "ไม่พบรูปแบบคำสั่ง พิมพ์ 'สรุป', 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ"})
 
 
 def handle_postback(event):
@@ -877,12 +875,7 @@ def handle_postback(event):
 
     def reply_after_action():
         res_obj = flex_carousel_summary(get_all_valid_days_data())
-        if isinstance(res_obj, dict) and res_obj.get("type") == "text":
-            reply_text(event["replyToken"], res_obj["text"])
-        elif isinstance(res_obj, list):
-            reply_multi_messages(event["replyToken"], res_obj)
-        else:
-            reply_flex(event["replyToken"], res_obj)
+        send_reply_response(event["replyToken"], res_obj)
 
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
@@ -898,7 +891,7 @@ def handle_postback(event):
     elif action == "day_delete_confirm" and len(parts) == 2:
         target_date_str = parts[1]
         confirm_flex = flex_confirm_delete_day(target_date_str)
-        reply_flex(event["replyToken"], confirm_flex)
+        send_reply_response(event["replyToken"], confirm_flex)
 
     elif action == "day_delete_do" and len(parts) == 2:
         target_date_str = parts[1]
@@ -916,14 +909,14 @@ def handle_postback(event):
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
         edit_flex = flex_edit_menu(order_id)
-        reply_flex(event["replyToken"], edit_flex)
+        send_reply_response(event["replyToken"], edit_flex)
 
     elif action == "edit_swap_menu" and len(parts) == 4:
         order_id = int(parts[1])
         old_code = parts[2]
         qty = int(parts[3])
         swap_flex = flex_swap_sku_menu(order_id, old_code, qty)
-        reply_flex(event["replyToken"], swap_flex)
+        send_reply_response(event["replyToken"], swap_flex)
 
     elif action == "edit_swap_do" and len(parts) == 5:
         order_id = int(parts[1])
@@ -940,7 +933,7 @@ def handle_postback(event):
         order_id = int(parts[1])
         code = parts[2]
         qty_flex = flex_qty_menu(order_id, code)
-        reply_flex(event["replyToken"], qty_flex)
+        send_reply_response(event["replyToken"], qty_flex)
 
     elif action == "edit_qty_set" and len(parts) == 4:
         order_id = int(parts[1])
@@ -952,7 +945,7 @@ def handle_postback(event):
     elif action == "edit_add_menu" and len(parts) == 2:
         order_id = int(parts[1])
         add_flex = flex_add_item_menu(order_id)
-        reply_flex(event["replyToken"], add_flex)
+        send_reply_response(event["replyToken"], add_flex)
 
     elif action == "select" and len(parts) == 5:
         resolved_dt = parts[1]
@@ -971,24 +964,6 @@ def handle_postback(event):
             add("orders", payload)
 
         reply_after_action()
-
-
-def reply_text(rt, text):
-    requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-        json={"replyToken": rt, "messages": [{"type": "text", "text": text}]}
-    )
-
-
-def reply_flex(rt, flex):
-    res = requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-        json={"replyToken": rt, "messages": [flex]}
-    )
-    if res.status_code != 200:
-        print(f"❌ LINE Flex Error ({res.status_code}): {res.text}")
 
 
 if __name__ == "__main__":
