@@ -23,16 +23,11 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TZ = ZoneInfo("Asia/Bangkok")
 
 PRODUCTS_DB = {
-    # Beer
     "l": "Lager", "r": "Rose", "d": "Dunkel",
-    # Amenity
     "m": "MUG", "p": "PINE", "j": "JUG", "t": "TOWER",
-    # อุปกรณ์
     "h40l": "Hoshizaki 40L", "h90": "Hoshizaki 90L", "h120": "Hoshizaki 120L",
     "sct": "Stanless Counter", "st": "Stanless Table",
-    # POSM
     "ast": "A-Stand", "std": "Standee", "aa5": "อะคริลิก A5", "aa6": "อะคริลิก A6",
-    # Other Alcohol
     "galf": "Galaxy แบน 350ml", "galr": "Galaxy กลม 700ml",
     "tend3": "Tendo 360ml", "tend7": "Tendo 700ml",
     "kach": "Kacha 375ml",
@@ -458,10 +453,11 @@ def flex_carousel_summary(days_data):
     if not bubbles:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
-    chunked_carousels = []
+    # LINE Carousel รองรับสูงสุด 12 Bubbles ต่อ 1 Carousel
+    flex_messages = []
     for i in range(0, len(bubbles), 10):
         chunk = bubbles[i:i+10]
-        chunked_carousels.append({
+        flex_messages.append({
             "type": "flex",
             "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//10 + 1})",
             "contents": {
@@ -469,17 +465,17 @@ def flex_carousel_summary(days_data):
                 "contents": chunk
             }
         })
-    return chunked_carousels
+    return flex_messages
 
 
 def send_reply_response(rt, res_obj):
     messages = []
     if isinstance(res_obj, list):
         messages = res_obj[:5]
-    elif isinstance(res_obj, dict) and res_obj.get("type") == "text":
-        messages = [{"type": "text", "text": res_obj["text"]}]
-    else:
+    elif isinstance(res_obj, dict) and "type" in res_obj:
         messages = [res_obj]
+    else:
+        messages = [{"type": "text", "text": str(res_obj)}]
 
     if not messages:
         return
