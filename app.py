@@ -108,10 +108,12 @@ def num(v):
     except Exception:
         return 0
 
-def fetch_fresh_data(target_date=None):
+def fetch_fresh_data(chat_id, target_date=None):
+    """ดึงข้อมูลเฉพาะของแชทนั้นๆ เท่านั้น (แยกส่วนตัวและกลุ่ม)"""
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        query = supabase.table("orders").select("*")
+        
+        query = supabase.table("orders").select("*").eq("chat_id", chat_id)
         if target_date:
             query = query.eq("ddate", target_date)
         orders_res = query.execute()
@@ -123,8 +125,8 @@ def fetch_fresh_data(target_date=None):
         print(f"❌ DB Fetch Error: {e}")
         return [], []
 
-def get_or_create_shop(name):
-    shops, _ = fetch_fresh_data()
+def get_or_create_shop(chat_id, name):
+    shops, _ = fetch_fresh_data(chat_id)
     clean_input = name.strip().lower()
     input_key = re.sub(r'^(ร้าน\s*)+', '', clean_input).strip()
 
@@ -245,7 +247,6 @@ def parse_order_lines(raw_text):
     global_date = today().isoformat()
     start_idx = 0
 
-    # ถ้าบรรทัดแรกเป็นตัวเลขเดี่ยวๆ (เช่น "18") ให้ถือว่าเป็นวันที่ส่วนกลางของข้อความนี้
     if lines[0].isdigit() and len(lines[0]) <= 2:
         global_date = resolve_date(int(lines[0]))
         start_idx = 1
@@ -262,7 +263,6 @@ def parse_order_lines(raw_text):
         line_date = global_date
         idx = 0
 
-        # เช็กว่าหน้าบรรทัดระบุวันที่หรือไม่ (เช่น "18 เจ๊โน แบน 2")
         if tokens[0].isdigit() and len(tokens[0]) <= 2:
             line_date = resolve_date(int(tokens[0]))
             idx = 1
@@ -284,7 +284,6 @@ def parse_order_lines(raw_text):
             errors.append(f"❌ ไม่พบข้อมูลสินค้าในบรรทัด: '{line}'")
             continue
 
-        # ตรวจสอบว่าบรรทัดนี้มีสินค้า/คีย์เวิร์ดที่รู้จักหรือไม่
         has_valid_product = False
         for t_check in tokens[idx:]:
             p_check, _ = split_product_qty(t_check)
@@ -358,10 +357,10 @@ def parse_order_lines(raw_text):
 
     return parsed_orders, ambiguous_requests, errors
 
-def build_disambiguation_flex(ambiguous_list):
+def build_disambiguation_flex(chat_id, ambiguous_list):
     bubbles = []
     for req in ambiguous_list[:10]:
-        shop_obj = get_or_create_shop(req["shop_name"])
+        shop_obj = get_or_create_shop(chat_id, req["shop_name"])
         shop_id = shop_obj["id"] if shop_obj else ""
         shop_display = shop_obj["name"] if shop_obj else req["shop_name"]
         ddate = req["ddate"]
@@ -381,7 +380,7 @@ def build_disambiguation_flex(ambiguous_list):
                 "action": {
                     "type": "postback",
                     "label": f"{p_name} ({qty})",
-                    "data": f"action=pick_sku&sid={shop_id}&date={ddate}&code={code}&qty={qty}&status={f_status}"
+                    "data": f"action=pick_sku&chat_id={chat_id}&sid={shop_id}&date={ddate}&code={code}&qty={qty}&status={f_status}"
                 }
             })
 
@@ -416,8 +415,8 @@ def build_disambiguation_flex(ambiguous_list):
         }
     }
 
-def upsert_order_items(shop_id, resolved_dt, items_dict, forced_status=None):
-    _, current_orders = fetch_fresh_data()
+def upsert_order_items(chat_id, chat_type, shop_id, resolved_dt, items_dict, forced_status=None):
+    _, current_orders = fetch_fresh_data(chat_id)
     existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
 
     if existing:
@@ -434,6 +433,8 @@ def upsert_order_items(shop_id, resolved_dt, items_dict, forced_status=None):
         supabase.table("orders").update(update_payload).eq("id", oid).execute()
     else:
         insert_payload = {
+            "chat_id": chat_id,
+            "chat_type": chat_type,
             "shop_id": shop_id, 
             "ddate": resolved_dt, 
             "status": forced_status if forced_status else "credit"
@@ -441,14 +442,14 @@ def upsert_order_items(shop_id, resolved_dt, items_dict, forced_status=None):
         for code, qty in items_dict.items():
             if qty > 0:
                 insert_payload[code] = qty
-        if len(insert_payload) > 3:
+        if len(insert_payload) > 5:
             supabase.table("orders").insert(insert_payload).execute()
 
-def build_summary_carousel(target_date=None):
+def build_summary_carousel(chat_id, target_date=None):
     try:
-        shops, orders = fetch_fresh_data(target_date)
+        shops, orders = fetch_fresh_data(chat_id, target_date)
         if not orders:
-            msg = f"📭 ยังไม่มีข้อมูลออเดอร์ของวันที่ {dmy(target_date)}" if target_date else "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"
+            msg = f"📭 ยังไม่มีข้อมูลออเดอร์ของวันที่ {dmy(target_date)}" if target_date else "📭 ยังไม่มีข้อมูลออเดอร์ในแชทนี้"
             return {"type": "text", "text": msg}
 
         grouped_by_date = {}
@@ -507,7 +508,7 @@ def build_summary_carousel(target_date=None):
                                 "action": {
                                     "type": "postback",
                                     "label": "Order ✅",
-                                    "data": f"action=status&id={order_id}&status=ordered"
+                                    "data": f"action=status&chat_id={chat_id}&id={order_id}&status=ordered"
                                 }
                             },
                             {
@@ -517,7 +518,7 @@ def build_summary_carousel(target_date=None):
                                 "action": {
                                     "type": "postback",
                                     "label": "สลิป 👍",
-                                    "data": f"action=status&id={order_id}&status=slip"
+                                    "data": f"action=status&chat_id={chat_id}&id={order_id}&status=slip"
                                 }
                             },
                             {
@@ -527,7 +528,7 @@ def build_summary_carousel(target_date=None):
                                 "action": {
                                     "type": "postback",
                                     "label": "เครดิต 💳",
-                                    "data": f"action=status&id={order_id}&status=credit"
+                                    "data": f"action=status&chat_id={chat_id}&id={order_id}&status=credit"
                                 }
                             }
                         ]
@@ -545,7 +546,7 @@ def build_summary_carousel(target_date=None):
                                 "action": {
                                     "type": "postback",
                                     "label": "Overdue 🚨",
-                                    "data": f"action=status&id={order_id}&status=overdue"
+                                    "data": f"action=status&chat_id={chat_id}&id={order_id}&status=overdue"
                                 }
                             },
                             {
@@ -555,7 +556,7 @@ def build_summary_carousel(target_date=None):
                                 "action": {
                                     "type": "postback",
                                     "label": "วงเงินเต็ม ⚠️",
-                                    "data": f"action=status&id={order_id}&status=insufficient_credit"
+                                    "data": f"action=status&chat_id={chat_id}&id={order_id}&status=insufficient_credit"
                                 }
                             }
                         ]
@@ -613,7 +614,7 @@ def build_summary_carousel(target_date=None):
                                     "action": {
                                         "type": "postback",
                                         "label": "ออเดอร์แล้วทั้งหมด ✅",
-                                        "data": f"action=bulk_status&date={date_str}&status=ordered"
+                                        "data": f"action=bulk_status&chat_id={chat_id}&date={date_str}&status=ordered"
                                     }
                                 },
                                 {
@@ -624,7 +625,7 @@ def build_summary_carousel(target_date=None):
                                     "action": {
                                         "type": "postback",
                                         "label": "อัปสลิปแล้วทั้งหมด 👍",
-                                        "data": f"action=bulk_status&date={date_str}&status=slip"
+                                        "data": f"action=bulk_status&chat_id={chat_id}&date={date_str}&status=slip"
                                     }
                                 }
                             ]
@@ -642,7 +643,7 @@ def build_summary_carousel(target_date=None):
                                     "action": {
                                         "type": "postback",
                                         "label": "ยกเลิกทั้งหมด ❌",
-                                        "data": f"action=bulk_cancel&date={date_str}"
+                                        "data": f"action=bulk_cancel&chat_id={chat_id}&date={date_str}"
                                     }
                                 }
                             ]
@@ -681,21 +682,33 @@ def callback():
     try:
         events = json.loads(body).get("events", [])
         for event in events:
+            source = event.get("source", {})
+            chat_type = source.get("type", "user") # "user", "group", หรือ "room"
+            
+            # กำหนด chat_id ให้แยกตามแหล่งที่มาของข้อความอย่างเด็ดขาด
+            if chat_type == "group":
+                chat_id = source.get("groupId")
+            elif chat_type == "room":
+                chat_id = source.get("roomId")
+            else:
+                chat_id = source.get("userId", "default_user")
+
             if event.get("type") == "message":
-                handle_message(event)
+                handle_message(event, chat_id, chat_type)
             elif event.get("type") == "postback":
-                handle_postback(event)
+                handle_postback(event, chat_id)
     except Exception as e:
         print(f"❌ Callback Error: {e}")
 
     return "OK", 200
 
-def handle_postback(event):
+def handle_postback(event, default_chat_id):
     reply_token = event["replyToken"]
     data = event.get("postback", {}).get("data", "")
     
     params = dict(item.split("=") for item in data.split("&") if "=" in item)
     action = params.get("action")
+    chat_id = params.get("chat_id", default_chat_id)
     
     try:
         if action == "pick_sku":
@@ -704,8 +717,9 @@ def handle_postback(event):
             code = params.get("code")
             qty = num(params.get("qty"))
             f_status = params.get("status", "credit")
+            chat_type = "group" if "group" in chat_id else "user"
             if shop_id and target_date and code:
-                upsert_order_items(shop_id, target_date, {code: qty}, forced_status=f_status)
+                upsert_order_items(chat_id, chat_type, shop_id, target_date, {code: qty}, forced_status=f_status)
 
         elif action == "status":
             order_id = params.get("id")
@@ -715,21 +729,21 @@ def handle_postback(event):
         elif action == "bulk_status":
             target_date = params.get("date")
             new_status = params.get("status")
-            supabase.table("orders").update({"status": new_status}).eq("ddate", target_date).execute()
+            supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
-            supabase.table("orders").delete().eq("ddate", target_date).execute()
+            supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
             
     except Exception as e:
         print(f"❌ Postback Action Error: {e}")
         send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการจัดการระบบ: {e}"})
         return
 
-    res_obj = build_summary_carousel()
+    res_obj = build_summary_carousel(chat_id)
     send_reply(reply_token, res_obj)
 
-def handle_message(event):
+def handle_message(event, chat_id, chat_type):
     msg = event["message"]
     if msg.get("type") != "text":
         return
@@ -744,24 +758,23 @@ def handle_message(event):
             date_arg = parts[1]
             iso_date = parse_target_date(date_arg)
             if iso_date:
-                res_obj = build_summary_carousel(iso_date)
+                res_obj = build_summary_carousel(chat_id, iso_date)
                 send_reply(reply_token, res_obj)
                 return
             else:
                 send_reply(reply_token, {"type": "text", "text": f"❌ รูปแบบวันที่ไม่ถูกต้อง: '{date_arg}' (ตัวอย่าง: สรุป 18 หรือ สรุป 18/11)"})
                 return
         else:
-            res_obj = build_summary_carousel()
+            res_obj = build_summary_carousel(chat_id)
             send_reply(reply_token, res_obj)
             return
 
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
-            "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งออเดอร์ทีละหลายบรรทัดพร้อมกัน:\n"
+            "📖 วิธีการใช้งานบอทสั่งของ (แยกแชทส่วนตัว/กลุ่ม):\n\n"
+            "1️⃣ สั่งออเดอร์ (รองรับหลายบรรทัด):\n"
             "เจ๊โน แบน 2 order\n"
-            "ครัวบ้านสวน l 3 slip\n"
-            "ร้านสะออน r 1\n\n"
+            "ครัวบ้านสวน l 3 slip\n\n"
             "2️⃣ เรียกดูสรุปยอด:\n"
             "• พิมพ์ 'สรุป' หรือ 'สรุป 18'\n\n"
             "📌 พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้าทั้งหมด"
@@ -779,7 +792,7 @@ def handle_message(event):
     if not parsed_orders and not ambiguous_requests:
         sample_format_msg = (
             "❌ รูปแบบคำสั่งไม่ถูกต้องหรือไม่พบสินค้าในระบบ\n\n"
-            "💡 ตัวอย่าง Format ที่ถูกต้อง (สั่งหลายบรรทัดได้):\n"
+            "💡 ตัวอย่าง Format ที่ถูกต้อง:\n"
             "เจ๊โน แบน 2 order\n"
             "ครัวบ้านสวน l 3 slip\n\n"
             "พิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าครับ"
@@ -788,12 +801,12 @@ def handle_message(event):
         return
 
     for order_data in parsed_orders:
-        shop = get_or_create_shop(order_data["shop_name"])
+        shop = get_or_create_shop(chat_id, order_data["shop_name"])
         if not shop:
             errors.append(f"❌ ไม่สามารถสร้างหรือหาร้าน '{order_data['shop_name']}' ได้")
             continue
         try:
-            upsert_order_items(shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
+            upsert_order_items(chat_id, chat_type, shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
         except Exception as db_err:
             print(f"❌ DB Error: {db_err}")
             errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
@@ -803,9 +816,9 @@ def handle_message(event):
         messages.append({"type": "text", "text": "⚠️ แจ้งเตือนบางรายการ:\n" + "\n".join(errors)})
 
     if ambiguous_requests:
-        messages.append(build_disambiguation_flex(ambiguous_requests))
+        messages.append(build_disambiguation_flex(chat_id, ambiguous_requests))
     else:
-        messages.append(build_summary_carousel())
+        messages.append(build_summary_carousel(chat_id))
 
     send_reply(reply_token, messages)
 
