@@ -159,6 +159,9 @@ def build_summary_carousel():
         for date_str, date_orders in sorted(grouped_by_date.items()):
             shop_contents = []
             
+            # คำนวณยอดรวม (Grand Total) ของสินค้าแต่ละชนิดในวันนั้นๆ
+            date_totals = {code: 0 for code in CODES}
+
             for idx, o in enumerate(date_orders):
                 sh = shop_by_id(o["shop_id"], shops)
                 shop_name = sh["name"] if sh else "ร้านค้า"
@@ -170,6 +173,7 @@ def build_summary_carousel():
                 for code in CODES:
                     q = num(o.get(code, 0))
                     if q > 0:
+                        date_totals[code] += q
                         p_name = PRODUCTS_DB.get(code, code)
                         item_rows.append({
                             "type": "box",
@@ -185,7 +189,7 @@ def build_summary_carousel():
                 if idx > 0:
                     shop_contents.append({"type": "separator", "margin": "lg"})
 
-                # รายละเอียดแต่ละร้าน พร้อมปุ่มเปลี่ยนสเตตัสรายร้าน
+                # รายละเอียดแต่ละร้าน พร้อมปุ่มเปลี่ยนสเตตัส
                 shop_contents.extend([
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111", "margin": "md"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
@@ -258,7 +262,36 @@ def build_summary_carousel():
                     }
                 ])
 
-            # ส่วนหัวของการ์ดแต่ละวัน เพิ่มปุ่มจัดการทั้งหมด (Bulk Actions)
+            # สร้างรายการสรุปยอดรวม (Grand Total Rows) ของวันนั้นๆ
+            total_rows = []
+            for code, total_qty in date_totals.items():
+                if total_qty > 0:
+                    p_name = PRODUCTS_DB.get(code, code)
+                    total_rows.append({
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#ffffff", "flex": 4},
+                            {"type": "text", "text": str(total_qty), "size": "sm", "align": "end", "weight": "bold", "color": "#ffffff", "flex": 1}
+                        ]
+                    })
+
+            if total_rows:
+                shop_contents.append({"type": "separator", "margin": "xxl"})
+                shop_contents.append({
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "md",
+                    "paddingAll": "md",
+                    "backgroundColor": "#222222",
+                    "cornerRadius": "md",
+                    "contents": [
+                        {"type": "text", "text": "📊 รวมยอดสินค้าทั้งหมดของวันนี้", "weight": "bold", "size": "sm", "color": "#06C755", "margin": "xs"},
+                        {"type": "separator", "margin": "sm"},
+                        {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": total_rows}
+                    ]
+                })
+
             bubbles.append({
                 "type": "bubble",
                 "size": "kilo",
@@ -280,7 +313,7 @@ def build_summary_carousel():
                                     "color": "#1DB446",
                                     "action": {
                                         "type": "postback",
-                                        "label": "Order ทั้งหมด ✅",
+                                        "label": "ออเดอร์แล้วทั้งหมด ✅",
                                         "data": f"action=bulk_status&date={date_str}&status=ordered"
                                     }
                                 },
@@ -291,7 +324,7 @@ def build_summary_carousel():
                                     "color": "#00B900",
                                     "action": {
                                         "type": "postback",
-                                        "label": "สลิปทั้งหมด 👍",
+                                        "label": "อัปสลิปแล้วทั้งหมด 👍",
                                         "data": f"action=bulk_status&date={date_str}&status=slip"
                                     }
                                 }
@@ -370,18 +403,15 @@ def handle_postback(event):
             order_id = params.get("id")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
-            print(f"✅ Order {order_id} status updated to {new_status}")
             
         elif action == "bulk_status":
             target_date = params.get("date")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("ddate", target_date).execute()
-            print(f"✅ All orders on {target_date} updated to {new_status}")
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
             supabase.table("orders").delete().eq("ddate", target_date).execute()
-            print(f"✅ All orders on {target_date} deleted/cancelled")
             
     except Exception as e:
         print(f"❌ Postback Action Error: {e}")
