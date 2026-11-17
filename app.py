@@ -69,7 +69,6 @@ ALIAS_MAP = {
 }
 
 CODES = list(PRODUCTS_DB.keys())
-VALID_SEARCH_KWORDS = list(PRODUCTS_DB.values()) + list(ALIAS_MAP.keys())
 
 STATUS_MAP = {
     "order": "ordered", "ordered": "ordered",
@@ -90,7 +89,6 @@ STATUSES = {
 }
 
 app = Flask(__name__)
-LOCK = threading.Lock()
 DATA = {"shops": [], "orders": [], "pending": []}
 
 
@@ -172,13 +170,6 @@ def get_or_create_shop(name):
     return new_shop["id"]
 
 
-def get_fallback_shop_id(resolved_dt):
-    day_orders = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-    if day_orders: return day_orders[-1]["shop_id"]
-    if DATA["orders"]: return DATA["orders"][-1]["shop_id"]
-    return get_or_create_shop("ร้านทั่วไป")
-
-
 def normalize_tokens(raw_tokens):
     merged = []
     i = 0
@@ -194,17 +185,16 @@ def normalize_tokens(raw_tokens):
 
 
 def match_product_token(token):
-    # ทำความสะอาดคำ ตัดช่องว่างและแปลงเป็นตัวพิมพ์เล็กทั้งหมดเพื่อรองรับความยืดหยุ่น
     clean_token = token.lower().strip()
     clean_no_space = clean_token.replace(" ", "")
     
-    # 1. เช็ค Alias แบบตรงเป๊ะ (รวมถึงแบบเว้นวรรค เช่น "galaxy แบน")
+    # 1. เช็ค Alias แบบตรงเป๊ะ
     if clean_token in ALIAS_MAP:
         return ("exact", ALIAS_MAP[clean_token], 1, None)
     if clean_no_space in ALIAS_MAP:
         return ("exact", ALIAS_MAP[clean_no_space], 1, None)
 
-    # 2. เช็คกรณีมีตัวเลขต่อท้าย เช่น galaxy3, galaxy แบน 2, glx 5
+    # 2. เช็คกรณีมีตัวเลขต่อท้าย เช่น galaxy5, galaxy แบน 2, glx5
     m_group = re.match(r"^([a-zเ-์\s]+?)\s*(\d*)$", clean_token)
     if m_group:
         g_name = m_group.group(1).strip().replace(" ", "")
@@ -217,7 +207,7 @@ def match_product_token(token):
         if g_name in GROUP_KEYWORDS:
             return ("ambiguous", GROUP_KEYWORDS[g_name], qty, g_name)
 
-    # 3. ค้นหาแบบใกล้เคียงเพื่อแสดงตัวเลือก (บังคับให้ขึ้นตัวเลือกแทนการปฏิเสธ)
+    # 3. ค้นหาแบบใกล้เคียงเพื่อแสดงตัวเลือก
     matches = get_close_matches(clean_no_space, list(ALIAS_MAP.keys()) + list(GROUP_KEYWORDS.keys()), n=1, cutoff=0.4)
     if matches:
         matched_key = matches[0]
@@ -226,12 +216,11 @@ def match_product_token(token):
         elif matched_key in ALIAS_MAP:
             return ("exact", ALIAS_MAP[matched_key], 1, None)
 
-    # ถ้าไม่มั่นใจจริงๆ ให้ตีเป็น ambiguous ดึงกลุ่ม Galaxy มาให้เลือกทันที (ห้ามปฏิเสธ)
+    # ถ้าพิมพ์คำกลางๆ เช่น "galaxy" หรือ "glx" โดดๆ ให้ตีเป็นกลุ่ม Galaxy เพื่อให้เด้งตัวเลือกแบน/กลม
+    if "galaxy" in clean_no_space or "glx" in clean_no_space or "glax" in clean_no_space or "กาแล็กซี" in clean_no_space:
+        return ("ambiguous", ["galf", "galr"], 1, clean_token)
+
     return ("ambiguous", ["galf", "galr"], 1, clean_token)
-
-
-def is_product_like_token(token):
-    return True # ยอมรับทุกโทนอัปเพื่อความยืดหยุ่นสูงสุด
 
 
 def build_day_bubble(target_date_str, orders_list):
@@ -396,8 +385,7 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
 
 def flex_edit_menu(order_id):
     ord_rec = next((o for o in DATA["orders"] if o.get("id") == order_id), None)
-    if not ord_rec:
-        return None
+    if not ord_rec: return None
     
     sh = shop_by_id(ord_rec["shop_id"])
     sh_name = sh["name"] if sh else "ร้านค้า"
