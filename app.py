@@ -370,7 +370,7 @@ def handle_message(event):
             if date_match:
                 resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
                 if resolved_dt:
-                    matched = [o for o in DATA["orders"] if o.get("ddate"] == resolved_dt]
+                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
                     if matched: reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched))
                     else: reply_text(event["replyToken"], f"📅 ไม่พบออเดอร์วันที่ {dmy(resolved_dt)}")
                     return
