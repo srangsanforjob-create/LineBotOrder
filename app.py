@@ -116,7 +116,7 @@ def create_new_shop(name):
         if res.data:
             return res.data[0]
     except Exception as e:
-        print(f" Error: {e}")
+        print(f"Shop Create Error: {e}")
     return None
 
 def shop_by_id(sid, shops_cache):
@@ -156,7 +156,7 @@ def parse_target_date(text_arg):
             else:
                 return date(y - 543, m, d).isoformat()
     except Exception as e:
-        print(f"e}")
+        print(e)
     return None
 
 def send_reply(reply_token, messages):
@@ -199,7 +199,6 @@ def parse_order_lines(raw_text):
         current_date = global_date
         idx = 0
 
-        # เช็คว่าโทเค็นแรกเป็นวันที่
         if tokens[0].isdigit() and len(tokens[0]) <= 2:
             current_date = resolve_date(int(tokens[0]))
             idx = 1
@@ -208,7 +207,6 @@ def parse_order_lines(raw_text):
         if idx >= len(tokens):
             continue
 
-        # ตรวจสอบสถานะท้ายบรรทัด
         line_status = None
         last_tok = tokens[-1].lower()
         if last_tok in ["ออเดอร์", "order", "ordered"]:
@@ -221,7 +219,6 @@ def parse_order_lines(raw_text):
         if idx >= len(tokens):
             continue
 
-        # ค้นหาโทเค็นแรกที่เป็นสินค้า
         first_item_idx = -1
         for i in range(idx, len(tokens)):
             if is_product_token(tokens[i]):
@@ -243,7 +240,6 @@ def parse_order_lines(raw_text):
             tok = item_tokens[i]
             clean_tok = tok.lower().strip()
 
-            # เคสติดกัน เช่น L2
             m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_tok)
             if m:
                 p_part = m.group(1)
@@ -254,7 +250,6 @@ def parse_order_lines(raw_text):
                     i += 1
                     continue
 
-            # เคสปกติ
             if clean_tok in ALIAS_MAP:
                 code = ALIAS_MAP[clean_tok]
                 qty = 1
@@ -543,7 +538,7 @@ def callback():
             elif event.get("type") == "postback":
                 handle_postback(event, chat_id)
     except Exception as e:
-        print(f"}")
+        print(e)
 
     return "OK", 200
 
@@ -646,7 +641,7 @@ def handle_message(event, chat_id, chat_type):
         try:
             insert_new_order(chat_id, chat_type, shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
         except Exception as db_err:
-            print(f": {db_err}")
+            print(db_err)
             errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
 
     messages = []
