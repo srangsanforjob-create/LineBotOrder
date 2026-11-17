@@ -281,6 +281,19 @@ def parse_order_lines(raw_text):
             continue
 
         shop_tokens = []
+        has_valid_product = False
+        
+        # ตรวจสอบเบื้องต้นว่าในบรรทัดนี้มีชื่อสินค้าหรือคีย์เวิร์ดที่รู้จักหรือไม่
+        for t_check in tokens[idx:]:
+            p_check, _ = split_product_qty(t_check)
+            if find_matching_skus(p_check):
+                has_valid_product = True
+                break
+
+        if not has_valid_product:
+            errors.append(f"❌ ไม่พบสินค้าหรือรูปแบบที่ไม่ถูกต้องในบรรทัด: '{line}'")
+            continue
+
         while idx < len(tokens):
             p_name, _ = split_product_qty(tokens[idx])
             if find_matching_skus(p_name):
@@ -742,13 +755,15 @@ def handle_message(event):
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
             "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งออเดอร์ (รองรับสถานะท้ายบรรทัดทั้งไทย/อังกฤษ):\n"
-            "• เจ๊โน แบน 2 order (หรือ ออเดอร์)\n"
-            "• ครัวบ้านสวน l 3 slip (หรือ สลิป)\n\n"
+            "1️⃣ ตัวอย่าง Format การสั่งออเดอร์ที่ถูกต้อง:\n"
+            "• [ชื่อร้าน] [สินค้า] [จำนวน] [สถานะ(ถ้ามี)]\n"
+            "ตัวอย่าง:\n"
+            "👉 เจ๊โน แบน 2 order\n"
+            "👉 ครัวบ้านสวน l 3 slip\n"
+            "👉 18 เจ๊โน l 2\n\n"
             "2️⃣ เรียกดูสรุปยอด:\n"
-            "• พิมพ์ 'สรุป' (ดูทั้งหมด)\n"
-            "• พิมพ์ 'สรุป 18' (ดูเฉพาะวันที่ 18)\n\n"
-            "📌 พิมพ์ 'ดูรหัส' ดูชื่อย่อสินค้า"
+            "• พิมพ์ 'สรุป' หรือ 'สรุป 18'\n\n"
+            "📌 พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้าทั้งหมด"
         )
         send_reply(reply_token, {"type": "text", "text": help_text})
         return
@@ -760,9 +775,19 @@ def handle_message(event):
 
     parsed_orders, ambiguous_requests, errors = parse_order_lines(text)
 
+    # 🛑 ถ้าพิมพ์ไม่ตรงกับสินค้าหรือรูปแบบใดๆ เลย จะไม่ขึ้นสรุป แต่จะส่ง Format ตัวอย่างกลับไปทันที
     if not parsed_orders and not ambiguous_requests:
-        err_msg = "\n".join(errors) if errors else "💡 ไม่เข้าใจคำสั่ง พิมพ์ 'คู่มือ' เพื่อดูวิธีสั่งซื้อครับ"
-        send_reply(reply_token, {"type": "text", "text": err_msg})
+        sample_format_msg = (
+            "❌ รูปแบบคำสั่งไม่ถูกต้องหรือไม่พบสินค้าในระบบ\n\n"
+            "💡 ตัวอย่าง Format ที่ถูกต้อง:\n"
+            "• [ชื่อร้าน] [สินค้า] [จำนวน] [สถานะ]\n\n"
+            "ตัวอย่างการใช้งาน:\n"
+            "👉 เจ๊โน แบน 2 order\n"
+            "👉 ครัวบ้านสวน l 3 slip\n"
+            "👉 18 เจ๊โน l 2\n\n"
+            "พิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าครับ"
+        )
+        send_reply(reply_token, {"type": "text", "text": sample_format_msg})
         return
 
     for order_data in parsed_orders:
