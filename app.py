@@ -459,7 +459,28 @@ def flex_carousel_summary(days_data):
     if not bubbles:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
-    return {"type": "flex", "altText": "สรุปรายการจัดส่งรายวัน", "contents": {"type": "carousel", "contents": bubbles[:12]}}
+    # หั่นแบ่ง Carousel ไม่ให้เกิน 6 การ์ดต่อข้อความ เพื่อป้องกัน Error "Too large" จาก LINE API
+    chunked_carousels = []
+    for i in range(0, len(bubbles), 6):
+        chunk = bubbles[i:i+6]
+        chunked_carousels.append({
+            "type": "flex",
+            "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//6 + 1})",
+            "contents": {
+                "type": "carousel",
+                "contents": chunk
+            }
+        })
+    return chunked_carousels
+
+
+def reply_multi_messages(rt, messages_list):
+    # ส่งข้อความหลายรายการ (รองรับกรณี Carousel ถูกแบ่งหลายก้อน)
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        json={"replyToken": rt, "messages": messages_list[:5]} # LINE รองรับสูงสุด 5 ข้อความต่อ 1 reply
+    )
 
 
 def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
@@ -749,11 +770,13 @@ def handle_message(event):
 
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
-        msg_obj = flex_carousel_summary(all_data)
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
+        res_obj = flex_carousel_summary(all_data)
+        if isinstance(res_obj, dict) and res_obj.get("type") == "text":
+            reply_text(event["replyToken"], res_obj["text"])
+        elif isinstance(res_obj, list):
+            reply_multi_messages(event["replyToken"], res_obj)
         else:
-            reply_flex(event["replyToken"], msg_obj)
+            reply_flex(event["replyToken"], res_obj)
         return
 
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
@@ -767,11 +790,13 @@ def handle_message(event):
         resolved_dt = resolve_date(d_val, m_val, y_val)
         if resolved_dt:
             day_data = get_specific_day_data(resolved_dt)
-            msg_obj = flex_carousel_summary(day_data)
-            if msg_obj.get("type") == "text":
-                reply_text(event["replyToken"], msg_obj["text"])
+            res_obj = flex_carousel_summary(day_data)
+            if isinstance(res_obj, dict) and res_obj.get("type") == "text":
+                reply_text(event["replyToken"], res_obj["text"])
+            elif isinstance(res_obj, list):
+                reply_multi_messages(event["replyToken"], res_obj)
             else:
-                reply_flex(event["replyToken"], msg_obj)
+                reply_flex(event["replyToken"], res_obj)
             return
 
     if any(k in clean_msg for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
@@ -833,11 +858,13 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
 
-                    msg_obj = flex_carousel_summary(get_all_valid_days_data())
-                    if msg_obj.get("type") == "text":
-                        reply_text(event["replyToken"], msg_obj["text"])
+                    res_obj = flex_carousel_summary(get_all_valid_days_data())
+                    if isinstance(res_obj, dict) and res_obj.get("type") == "text":
+                        reply_text(event["replyToken"], res_obj["text"])
+                    elif isinstance(res_obj, list):
+                        reply_multi_messages(event["replyToken"], res_obj)
                     else:
-                        reply_flex(event["replyToken"], msg_obj)
+                        reply_flex(event["replyToken"], res_obj)
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่ง พิมพ์ 'สรุป', 'ขอรายการสินค้า' หรือ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -848,26 +875,25 @@ def handle_postback(event):
     parts = data_str.split("|")
     action = parts[0]
 
-    all_data = get_all_valid_days_data()
+    def reply_after_action():
+        res_obj = flex_carousel_summary(get_all_valid_days_data())
+        if isinstance(res_obj, dict) and res_obj.get("type") == "text":
+            reply_text(event["replyToken"], res_obj["text"])
+        elif isinstance(res_obj, list):
+            reply_multi_messages(event["replyToken"], res_obj)
+        else:
+            reply_flex(event["replyToken"], res_obj)
 
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "day_status" and len(parts) == 3:
         new_status = parts[1]
         target_date_str = parts[2]
         update_status_by_date(target_date_str, new_status)
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "day_delete_confirm" and len(parts) == 2:
         target_date_str = parts[1]
@@ -877,27 +903,15 @@ def handle_postback(event):
     elif action == "day_delete_do" and len(parts) == 2:
         target_date_str = parts[1]
         delete_orders_by_date(target_date_str)
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "cancel":
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -920,11 +934,7 @@ def handle_postback(event):
         if ord_rec:
             existing_new_qty = num(ord_rec.get(new_code, 0))
             update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "edit_qty_menu" and len(parts) == 3:
         order_id = int(parts[1])
@@ -937,11 +947,7 @@ def handle_postback(event):
         code = parts[2]
         new_qty = int(parts[3])
         update_db("orders", order_id, {code: new_qty})
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
     elif action == "edit_add_menu" and len(parts) == 2:
         order_id = int(parts[1])
@@ -964,11 +970,7 @@ def handle_postback(event):
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
             add("orders", payload)
 
-        msg_obj = flex_carousel_summary(get_all_valid_days_data())
-        if msg_obj.get("type") == "text":
-            reply_text(event["replyToken"], msg_obj["text"])
-        else:
-            reply_flex(event["replyToken"], msg_obj)
+        reply_after_action()
 
 
 def reply_text(rt, text):
