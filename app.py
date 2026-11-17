@@ -794,14 +794,14 @@ def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     msg_lower = msg_text.lower()
 
-    # 1. จัดการคำสั่ง "สรุป" แบบไม่มีตัวเลข (สรุปเดือนปัจจุบัน)
+    # [สำคัญ] ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาดเป็นอันดับแรกสุด
     if msg_lower == "สรุป":
         t = today()
         m_data = get_month_filtered_days_data(t.month, t.year)
         reply_flex(event["replyToken"], flex_carousel_summary(m_data))
         return
 
-    # 2. จัดการคำสั่ง "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์แค่วันที่เดี่ยวๆ เช่น "17" หรือ "17/12"
+    # ตรวจสอบคำสั่ง "สรุป [วันที่]" เช่น "สรุป 17" หรือพิมพ์แค่วันที่เดี่ยวๆ เช่น "17" หรือ "17/12"
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
     date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
     
@@ -816,7 +816,7 @@ def handle_message(event):
             reply_flex(event["replyToken"], flex_carousel_summary(day_data))
             return
 
-    # 3. คำสั่งขอรายการสินค้า
+    # คำสั่งขอรายการสินค้า
     if any(k in msg_lower for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
@@ -829,7 +829,7 @@ def handle_message(event):
         reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
         return
 
-    # 4. บันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
+    # บันทึกออเดอร์ปกติ: [วันที่] [ชื่อร้าน] [รายการสินค้า...]
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
