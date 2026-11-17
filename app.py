@@ -215,7 +215,6 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
         if not item_rows:
             item_rows.append({"type": "text", "text": "ไม่มีรายการสินค้า", "size": "sm", "color": "#888888"})
 
-        # จัดระเบียบปุ่มสถานะใน Footer ไม่ให้รกหน้าจอ (แบ่งเป็น 2 แถว)
         block = {
             "type": "box",
             "layout": "vertical",
@@ -371,7 +370,7 @@ def handle_message(event):
             if date_match:
                 resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
                 if resolved_dt:
-                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
+                    matched = [o for o in DATA["orders"] if o.get("ddate"] == resolved_dt]
                     if matched: reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched))
                     else: reply_text(event["replyToken"], f"📅 ไม่พบออเดอร์วันที่ {dmy(resolved_dt)}")
                     return
@@ -385,7 +384,6 @@ def handle_message(event):
                 shop_name = parts[1]
                 tokens = parts[2:]
                 
-                # ดีฟอลต์สถานะเป็น pending เสมอหากไม่ได้ระบุ
                 status_key = "pending"
                 if tokens and tokens[-1].lower() in STATUS_MAP:
                     status_key = STATUS_MAP[tokens[-1].lower()]
@@ -410,7 +408,6 @@ def handle_message(event):
                 if order_items:
                     shop_id = get_or_create_shop(shop_name)
                     
-                    # เช็คว่ามีออเดอร์ของร้านนี้ในวันเดียวกันอยู่แล้วหรือไม่ (เพื่อบวกเพิ่มหรือแก้ไขออเดอร์เดิม)
                     existing_order = next((o for o in DATA["orders"] if o["shop_id"] == shop_id and o.get("ddate") == resolved_dt), None)
                     
                     if existing_order:
@@ -428,7 +425,7 @@ def handle_message(event):
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                         add("orders", payload)
                         
-                    matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
+                    matched = [o for o in DATA["orders"] if o.get("ddate"] == resolved_dt]
                     reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str, parsed_info_msg=parsed_str))
                     return
 
