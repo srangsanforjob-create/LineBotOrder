@@ -160,6 +160,18 @@ def delete_db(tab, oid):
     DATA[tab] = [item for item in DATA[tab] if str(item.get("id")) != str(oid)]
 
 
+def delete_orders_by_date(target_date_str):
+    supabase.table("orders").delete().eq("ddate", target_date_str).execute()
+    DATA["orders"] = [item for item in DATA["orders"] if item.get("ddate") != target_date_str]
+
+
+def update_status_by_date(target_date_str, new_status):
+    supabase.table("orders").update({"status": new_status}).eq("ddate", target_date_str).execute()
+    for item in DATA["orders"]:
+        if item.get("ddate") == target_date_str:
+            item["status"] = new_status
+
+
 def get_order_by_id(oid):
     ord_rec = next((o for o in DATA["orders"] if str(o.get("id")) == str(oid)), None)
     if not ord_rec:
@@ -391,6 +403,35 @@ def build_day_bubble(target_date_str, orders_list):
         }
         order_blocks.append(block)
 
+    # ปุ่มจัดการทั้งวัน (วางไว้ที่หัวของการ์ดวันนั้นๆ)
+    day_action_box = {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "margin": "md",
+        "contents": [
+            {"type": "separator", "color": "#CCCCCC"},
+            {"type": "text", "text": "⚡ จัดการสถานะทั้งวัน", "size": "xs", "weight": "bold", "color": "#555555", "align": "center"},
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "xs",
+                "contents": [
+                    {"type": "button", "style": "primary", "color": "#06C755", "height": "sm", "action": {"type": "postback", "label": "✅ ออเดอร์แล้วทั้งวัน", "data": f"day_status|ordered|{target_date_str}"}},
+                    {"type": "button", "style": "primary", "color": "#00B900", "height": "sm", "action": {"type": "postback", "label": "👍 สลิปแล้วทั้งวัน", "data": f"day_status|slip|{target_date_str}"}}
+                ]
+            },
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "spacing": "xs",
+                "contents": [
+                    {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์ทั้งวัน", "data": f"day_delete_confirm|{target_date_str}"}}
+                ]
+            }
+        ]
+    }
+
     return {
         "type": "bubble",
         "size": "mega",
@@ -404,7 +445,37 @@ def build_day_bubble(target_date_str, orders_list):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "contents": order_blocks
+            "contents": [day_action_box, *order_blocks]
+        }
+    }
+
+
+def flex_confirm_delete_day(target_date_str):
+    return {
+        "type": "flex",
+        "altText": "ยืนยันการลบออเดอร์ทั้งหมดในวันนั้น",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "contents": [
+                    {"type": "text", "text": "⚠️ ยืนยันการลบ", "weight": "bold", "color": "#FF334B", "size": "lg", "align": "center"},
+                    {"type": "text", "text": f"คุณต้องการลบออเดอร์ *ทั้งหมด* ในวันที่ {dmy(target_date_str)} ใช่หรือไม่?", "size": "sm", "color": "#333333", "margin": "md", "wrap": True, "align": "center"},
+                    {"type": "separator", "margin": "lg"},
+                    {
+                        "type": "box",
+                        "layout": "vertical",
+                        "spacing": "sm",
+                        "margin": "lg",
+                        "contents": [
+                            {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ยืนยันลบทั้งหมด", "data": f"day_delete_do|{target_date_str}"}},
+                            {"type": "button", "style": "secondary", "height": "sm", "action": {"type": "postback", "label": "❌ ยกเลิก", "data": "cancel"}}
+                        ]
+                    }
+                ]
+            }
         }
     }
 
@@ -771,6 +842,25 @@ def handle_postback(event):
     if action == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+
+    elif action == "day_status" and len(parts) == 3:
+        new_status = parts[1]
+        target_date_str = parts[2]
+        update_status_by_date(target_date_str, new_status)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+
+    elif action == "day_delete_confirm" and len(parts) == 2:
+        target_date_str = parts[1]
+        confirm_flex = flex_confirm_delete_day(target_date_str)
+        reply_flex(event["replyToken"], confirm_flex)
+
+    elif action == "day_delete_do" and len(parts) == 2:
+        target_date_str = parts[1]
+        delete_orders_by_date(target_date_str)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+
+    elif action == "cancel":
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
 
     elif action == "delete" and len(parts) == 2:
