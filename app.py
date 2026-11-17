@@ -108,10 +108,14 @@ def num(v):
     except Exception:
         return 0
 
-def fetch_fresh_data():
+def fetch_fresh_data(target_date=None):
     try:
         shops_res = supabase.table("shops").select("*").execute()
-        orders_res = supabase.table("orders").select("*").execute()
+        query = supabase.table("orders").select("*")
+        if target_date:
+            query = query.eq("ddate", target_date)
+        orders_res = query.execute()
+        
         shops = shops_res.data or []
         orders = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (orders_res.data or [])]
         return shops, orders
@@ -159,6 +163,27 @@ def resolve_date(day_val):
         return date(t.year, t.month, day_val).isoformat()
     except Exception:
         return t.isoformat()
+
+def parse_target_date(text_arg):
+    """แปลงข้อความวันที่ เช่น '18', '18/11', '18/11/2026' ให้เป็น ISO format (YYYY-MM-DD)"""
+    t = today()
+    parts = text_arg.strip().split('/')
+    try:
+        if len(parts) == 1 and parts[0].isdigit():
+            d = int(parts[0])
+            return date(t.year, t.month, d).isoformat()
+        elif len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            d, m = int(parts[0]), int(parts[1])
+            return date(t.year, m, d).isoformat()
+        elif len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit():
+            d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
+            if y < 2500:  # เผื่อกรอกปี ค.ศ.
+                return date(y, m, d).isoformat()
+            else:  # เผื่อกรอกปี พ.ศ.
+                return date(y - 543, m, d).isoformat()
+    except Exception as e:
+        print(f"❌ Parse Date Error: {e}")
+    return None
 
 def send_reply(reply_token, messages):
     if not isinstance(messages, list):
@@ -347,7 +372,6 @@ def build_disambiguation_flex(ambiguous_list):
     }
 
 def upsert_order_items(shop_id, resolved_dt, items_dict):
-    """ดึงข้อมูลเดิมมาบวกเพิ่มจำนวน (Delta) อย่างถูกต้อง ไม่ทับซ้อน"""
     _, current_orders = fetch_fresh_data()
     existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
 
@@ -356,7 +380,7 @@ def upsert_order_items(shop_id, resolved_dt, items_dict):
         update_payload = {}
         for code, add_qty in items_dict.items():
             curr_q = num(existing.get(code, 0))
-            new_q = max(0, curr_q + add_qty)  # บวกทบกับยอดเก่าในฐานข้อมูล
+            new_q = max(0, curr_q + add_qty)
             update_payload[code] = new_q
         supabase.table("orders").update(update_payload).eq("id", oid).execute()
     else:
@@ -367,11 +391,12 @@ def upsert_order_items(shop_id, resolved_dt, items_dict):
         if len(insert_payload) > 3:
             supabase.table("orders").insert(insert_payload).execute()
 
-def build_summary_carousel():
+def build_summary_carousel(target_date=None):
     try:
-        shops, orders = fetch_fresh_data()
+        shops, orders = fetch_fresh_data(target_date)
         if not orders:
-            return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
+            msg = f"📭 ยังไม่มีข้อมูลออเดอร์ของวันที่ {dmy(target_date)}" if target_date else "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"
+            return {"type": "text", "text": msg}
 
         grouped_by_date = {}
         for o in orders:
@@ -657,24 +682,37 @@ def handle_message(event):
     text = msg.get("text", "").strip()
     reply_token = event["replyToken"]
 
-    if text.lower() in ["สรุป", "ยอด", "list"]:
-        res_obj = build_summary_carousel()
-        send_reply(reply_token, res_obj)
-        return
+    text_lower = text.lower()
 
-    if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
+    # ตรวจสอบคำสั่งเรียกสรุปเฉพาะวัน เช่น "สรุป 18" หรือ "สรุป 18/11"
+    if text_lower.startswith("สรุป") or text_lower.startswith("ยอด") or text_lower == "list":
+        parts = text.split()
+        if len(parts) >= 2:
+            date_arg = parts[1]
+            iso_date = parse_target_date(date_arg)
+            if iso_date:
+                res_obj = build_summary_carousel(iso_date)
+                send_reply(reply_token, res_obj)
+                return
+            else:
+                send_reply(reply_token, {"type": "text", "text": f"❌ รูปแบบวันที่ไม่ถูกต้อง: '{date_arg}' (ตัวอย่าง: สรุป 18 หรือ สรุป 18/11)"})
+                return
+        else:
+            res_obj = build_summary_carousel()
+            send_reply(reply_token, res_obj)
+            return
+
+    if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
-            "📖 วิธีการสั่งออเดอร์:\n\n"
-            "1️⃣ สั่งแบบเจาะจง:\n"
-            "• เจ๊โน แบน 2 กลม 1 l3\n\n"
-            "2️⃣ สั่งแบบระบุหมวดหมู่ (บอทจะเด้งปุ่มให้เลือก SKU):\n"
-            "• เจ๊โน โซจู 2\n"
-            "• เจ๊โน galaxy 1\n\n"
-            "3️⃣ สั่งระบุวันที่ / หลายร้านพร้อมกัน:\n"
-            "18\n"
-            "เจ๊โน แบน 2\n"
-            "ครัวบ้านสวน l 3 r 2\n\n"
-            "📌 พิมพ์ 'สรุป' ดูยอด | พิมพ์ 'ดูรหัส' ดูชื่อย่อสินค้า"
+            "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
+            "1️⃣ สั่งออเดอร์:\n"
+            "• เจ๊โน แบน 2\n"
+            "• 18 เจ๊โน โซจู 2 (ระบุวันได้)\n\n"
+            "2️⃣ เรียกดูสรุปยอด:\n"
+            "• พิมพ์ 'สรุป' (ดูทั้งหมด)\n"
+            "• พิมพ์ 'สรุป 18' (ดูเฉพาะวันที่ 18 เดือนนี้)\n"
+            "• พิมพ์ 'สรุป 18/11' (ดูเฉพาะวันที่ 18 พ.ย.)\n\n"
+            "📌 พิมพ์ 'ดูรหัส' ดูชื่อย่อสินค้า"
         )
         send_reply(reply_token, {"type": "text", "text": help_text})
         return
