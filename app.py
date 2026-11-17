@@ -42,7 +42,7 @@ ALIAS_MAP = {
     "rose": "r", "โรส": "r", "โรเซ่": "r", "r": "r",
     "dunkel": "d", "ดุงเกล": "d", "ดังก์เกล": "d", "ดำ": "d", "d": "d",
     # Glasses & Towers
-    "mug": "m", "แก้วมัค": "m", "m": "m",
+    "mug": "m", "แก้วมัค": "m", "มัค": "m", "m": "m",
     "pine": "p", "ไพน์": "p", "ไพนต์": "p", "p": "p",
     "jug": "j", "เหยือก": "j", "j": "j",
     "tower": "t", "ทาวเวอร์": "t", "ทาว": "t", "t": "t",
@@ -125,12 +125,27 @@ def fetch_fresh_data(target_date=None):
 
 def get_or_create_shop(name):
     shops, _ = fetch_fresh_data()
+    clean_input = name.strip().lower()
+    input_key = re.sub(r'^(ร้าน\s*)+', '', clean_input).strip()
+
+    best_match = None
+    for s in shops:
+        s_name = s["name"].strip().lower()
+        s_key = re.sub(r'^(ร้าน\s*)+', '', s_name).strip()
+        
+        if s_name == clean_input or s_name == f"ร้าน {clean_input}" or s_key == input_key:
+            return s
+        
+        if input_key in s_key or s_key in input_key:
+            if not best_match or len(s_key) >= len(re.sub(r'^(ร้าน\s*)+', '', best_match["name"]).strip()):
+                best_match = s
+
+    if best_match:
+        return best_match
+
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
-    s = next((s for s in shops if s["name"] == dn), None)
-    if s:
-        return s
     try:
         res = supabase.table("shops").insert({
             "name": dn, 
@@ -165,7 +180,6 @@ def resolve_date(day_val):
         return t.isoformat()
 
 def parse_target_date(text_arg):
-    """แปลงข้อความวันที่ เช่น '18', '18/11', '18/11/2026' ให้เป็น ISO format (YYYY-MM-DD)"""
     t = today()
     parts = text_arg.strip().split('/')
     try:
@@ -177,9 +191,9 @@ def parse_target_date(text_arg):
             return date(t.year, m, d).isoformat()
         elif len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit() and parts[2].isdigit():
             d, m, y = int(parts[0]), int(parts[1]), int(parts[2])
-            if y < 2500:  # เผื่อกรอกปี ค.ศ.
+            if y < 2500:
                 return date(y, m, d).isoformat()
-            else:  # เผื่อกรอกปี พ.ศ.
+            else:
                 return date(y - 543, m, d).isoformat()
     except Exception as e:
         print(f"❌ Parse Date Error: {e}")
@@ -254,6 +268,18 @@ def parse_order_lines(raw_text):
         if idx >= len(tokens):
             continue
 
+        line_status = None
+        last_tok = tokens[-1].lower()
+        if last_tok in ["ออเดอร์", "order", "ordered"]:
+            line_status = "ordered"
+            tokens.pop()
+        elif last_tok in ["สลิป", "slip"]:
+            line_status = "slip"
+            tokens.pop()
+
+        if idx >= len(tokens):
+            continue
+
         shop_tokens = []
         while idx < len(tokens):
             p_name, _ = split_product_qty(tokens[idx])
@@ -302,14 +328,16 @@ def parse_order_lines(raw_text):
                     "shop_name": shop_name,
                     "keyword": p_name,
                     "qty": qty,
-                    "candidates": matched_codes
+                    "candidates": matched_codes,
+                    "forced_status": line_status
                 })
 
         if items:
             parsed_orders.append({
                 "ddate": line_date,
                 "shop_name": shop_name,
-                "items": items
+                "items": items,
+                "forced_status": line_status
             })
 
     return parsed_orders, ambiguous_requests, errors
@@ -323,6 +351,7 @@ def build_disambiguation_flex(ambiguous_list):
         ddate = req["ddate"]
         qty = req["qty"]
         keyword = req["keyword"]
+        f_status = req.get("forced_status", "credit")
 
         buttons = []
         for code in req["candidates"]:
@@ -336,7 +365,7 @@ def build_disambiguation_flex(ambiguous_list):
                 "action": {
                     "type": "postback",
                     "label": f"{p_name} ({qty})",
-                    "data": f"action=pick_sku&sid={shop_id}&date={ddate}&code={code}&qty={qty}"
+                    "data": f"action=pick_sku&sid={shop_id}&date={ddate}&code={code}&qty={qty}&status={f_status}"
                 }
             })
 
@@ -371,7 +400,7 @@ def build_disambiguation_flex(ambiguous_list):
         }
     }
 
-def upsert_order_items(shop_id, resolved_dt, items_dict):
+def upsert_order_items(shop_id, resolved_dt, items_dict, forced_status=None):
     _, current_orders = fetch_fresh_data()
     existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
 
@@ -382,9 +411,17 @@ def upsert_order_items(shop_id, resolved_dt, items_dict):
             curr_q = num(existing.get(code, 0))
             new_q = max(0, curr_q + add_qty)
             update_payload[code] = new_q
+        
+        if forced_status:
+            update_payload["status"] = forced_status
+            
         supabase.table("orders").update(update_payload).eq("id", oid).execute()
     else:
-        insert_payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit"}
+        insert_payload = {
+            "shop_id": shop_id, 
+            "ddate": resolved_dt, 
+            "status": forced_status if forced_status else "credit"
+        }
         for code, qty in items_dict.items():
             if qty > 0:
                 insert_payload[code] = qty
@@ -650,8 +687,9 @@ def handle_postback(event):
             target_date = params.get("date")
             code = params.get("code")
             qty = num(params.get("qty"))
+            f_status = params.get("status", "credit")
             if shop_id and target_date and code:
-                upsert_order_items(shop_id, target_date, {code: qty})
+                upsert_order_items(shop_id, target_date, {code: qty}, forced_status=f_status)
 
         elif action == "status":
             order_id = params.get("id")
@@ -684,7 +722,6 @@ def handle_message(event):
 
     text_lower = text.lower()
 
-    # ตรวจสอบคำสั่งเรียกสรุปเฉพาะวัน เช่น "สรุป 18" หรือ "สรุป 18/11"
     if text_lower.startswith("สรุป") or text_lower.startswith("ยอด") or text_lower == "list":
         parts = text.split()
         if len(parts) >= 2:
@@ -705,13 +742,12 @@ def handle_message(event):
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
             "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ สั่งออเดอร์:\n"
-            "• เจ๊โน แบน 2\n"
-            "• 18 เจ๊โน โซจู 2 (ระบุวันได้)\n\n"
+            "1️⃣ สั่งออเดอร์ (รองรับสถานะท้ายบรรทัดทั้งไทย/อังกฤษ):\n"
+            "• เจ๊โน แบน 2 order (หรือ ออเดอร์)\n"
+            "• ครัวบ้านสวน l 3 slip (หรือ สลิป)\n\n"
             "2️⃣ เรียกดูสรุปยอด:\n"
             "• พิมพ์ 'สรุป' (ดูทั้งหมด)\n"
-            "• พิมพ์ 'สรุป 18' (ดูเฉพาะวันที่ 18 เดือนนี้)\n"
-            "• พิมพ์ 'สรุป 18/11' (ดูเฉพาะวันที่ 18 พ.ย.)\n\n"
+            "• พิมพ์ 'สรุป 18' (ดูเฉพาะวันที่ 18)\n\n"
             "📌 พิมพ์ 'ดูรหัส' ดูชื่อย่อสินค้า"
         )
         send_reply(reply_token, {"type": "text", "text": help_text})
@@ -735,7 +771,7 @@ def handle_message(event):
             errors.append(f"❌ ไม่สามารถสร้างหรือหาร้าน '{order_data['shop_name']}' ได้")
             continue
         try:
-            upsert_order_items(shop["id"], order_data["ddate"], order_data["items"])
+            upsert_order_items(shop["id"], order_data["ddate"], order_data["items"], forced_status=order_data.get("forced_status"))
         except Exception as db_err:
             print(f"❌ DB Error: {db_err}")
             errors.append(f"❌ บันทึกร้าน '{order_data['shop_name']}' ไม่สำเร็จ: {db_err}")
