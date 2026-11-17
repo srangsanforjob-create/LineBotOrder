@@ -48,7 +48,7 @@ ALIAS_MAP = {
     "counter": "sct", "table": "st",
     "astand": "ast", "standee": "std",
     "galaxyแบน": "galf", "galf": "galf",
-    "galaxyกลม": "galr", "galr": "galr", "กาแล็กซี": "galr", "กาแลaxy": "galr",
+    "galaxyกลม": "galr", "galr": "galr", "galaxy": "galr", "กาแล็กซี": "galr", "กาแลaxy": "galr",
     "tendo360": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tend7": "tend7",
     "kacha": "kach", "kach": "kach",
@@ -167,7 +167,6 @@ def match_product_token(token):
         name_part = m.group(1)
         qty = int(m.group(2))
         
-        # ตรวจสอบว่าเป็นคำสั่งกลุ่มกว้างที่ต้องการให้เลือก SKU หรือไม่
         if name_part in ["galaxy", "กาแล็กซี", "กาแลaxy"]:
             return ("ambiguous", ["galf", "galr"], qty, name_part)
         if name_part in ["soju", "โซจู"]:
