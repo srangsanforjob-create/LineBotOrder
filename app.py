@@ -315,7 +315,6 @@ def build_day_bubble(target_date_str, orders_list):
             "spacing": "xs",
             "margin": "md",
             "contents": [
-                {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                 {
                     "type": "box",
                     "layout": "horizontal",
@@ -333,6 +332,7 @@ def build_day_bubble(target_date_str, orders_list):
                     ]
                 },
                 {"type": "box", "layout": "vertical", "spacing": "2px", "contents": item_rows},
+                {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                 {
                     "type": "box",
                     "layout": "vertical",
@@ -380,7 +380,6 @@ def build_day_bubble(target_date_str, orders_list):
         "spacing": "sm",
         "margin": "md",
         "contents": [
-            {"type": "separator", "color": "#CCCCCC"},
             {"type": "text", "text": "⚡ จัดการสถานะทั้งวัน", "size": "xs", "weight": "bold", "color": "#555555", "align": "center"},
             {
                 "type": "box",
@@ -415,7 +414,7 @@ def build_day_bubble(target_date_str, orders_list):
         "body": {
             "type": "box",
             "layout": "vertical",
-            "contents": [day_action_box, *order_blocks]
+            "contents": [day_action_box, {"type": "separator", "color": "#E0E0E0", "margin": "md"}, *order_blocks]
         }
     }
 
@@ -460,11 +459,11 @@ def flex_carousel_summary(days_data):
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
     chunked_carousels = []
-    for i in range(0, len(bubbles), 12):
-        chunk = bubbles[i:i+12]
+    for i in range(0, len(bubbles), 10):
+        chunk = bubbles[i:i+10]
         chunked_carousels.append({
             "type": "flex",
-            "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//12 + 1})",
+            "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//10 + 1})",
             "contents": {
                 "type": "carousel",
                 "contents": chunk
@@ -481,6 +480,9 @@ def send_reply_response(rt, res_obj):
         messages = [{"type": "text", "text": res_obj["text"]}]
     else:
         messages = [res_obj]
+
+    if not messages:
+        return
 
     print(f"DEBUG [send_reply_response]: Sending {len(messages)} message(s) with token {rt[:10]}...")
     res = requests.post(
@@ -524,6 +526,7 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
                 "contents": [
                     {"type": "text", "text": "🔍 กรุณาเลือกประเภทสินค้า", "weight": "bold", "color": "#FF9900", "size": "md"},
                     {"type": "text", "text": f"คำสั่ง '{orig_query}' จำนวน {qty} • {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
+                    {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
                 ]
             }
@@ -605,6 +608,7 @@ def flex_edit_menu(order_id):
                 "contents": [
                     {"type": "text", "text": f"✏️ แก้ไข: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
                     {"type": "text", "text": f"วันที่ {dmy(ord_rec.get('ddate', ''))} • #{order_id}", "size": "xs", "color": "#666666", "wrap": True},
+                    {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                     *item_sections
                 ]
             }
@@ -637,6 +641,7 @@ def flex_swap_sku_menu(order_id, old_code, qty):
                 "contents": [
                     {"type": "text", "text": "🔄 เลือกสินค้าใหม่แทนที่", "weight": "bold", "color": "#1399FF", "size": "md"},
                     {"type": "text", "text": f"เปลี่ยนจาก: {old_name} ({qty})", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
                 ]
             }
@@ -695,6 +700,7 @@ def flex_qty_menu(order_id, code):
                 "contents": [
                     {"type": "text", "text": f"🔢 ปรับจำนวน: {p_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
                     {"type": "text", "text": f"จำนวนปัจจุบัน: {curr_qty}", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": rows_box}
                 ]
             }
@@ -726,6 +732,7 @@ def flex_add_item_menu(order_id):
                 "contents": [
                     {"type": "text", "text": "➕ เพิ่มสินค้าในออเดอร์", "weight": "bold", "color": "#1399FF", "size": "md"},
                     {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                    {"type": "separator", "color": "#E0E0E0", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:10]}
                 ]
             }
@@ -761,7 +768,7 @@ def get_all_valid_days_data():
     _, orders, _ = fetch_fresh_data()
     all_dates = set(o.get("ddate") for o in orders if o.get("ddate"))
     sorted_dates = sorted(list(all_dates))
-    return {sd: [o for o in orders if o.get("ddate") == sd] for sd in sorted_dates}
+    return {sd: [o for o in orders if o.get("ddate"] == sd] for sd in sorted_dates} # type: ignore
 
 
 def get_specific_day_data(date_str):
