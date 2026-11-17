@@ -65,7 +65,8 @@ STATUS_MAP = {
     "order": "ordered", "ordered": "ordered",
     "slipt": "slip", "slip": "slip",
     "over": "overdue", "overdue": "overdue",
-    "limit": "short", "short": "short"
+    "limit": "short", "short": "short",
+    "pending": "pending"
 }
 
 STATUSES = {
@@ -187,9 +188,7 @@ def match_product_token(token):
     return (None, 0, False, None, None)
 
 
-# ---------- ฟังก์ชันรวมทุกออเดอร์ในวันเดียวกันเป็นการ์ดเดียว (Flex Message แบบลิสต์แนวตั้ง) ----------
-
-def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None):
+def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed_info_msg=None):
     order_blocks = []
     
     for ord_rec in orders_list:
@@ -254,9 +253,22 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None):
         }
         order_blocks.append(block)
 
-    body_contents = order_blocks
+    body_contents = []
+    
+    if parsed_info_msg:
+        body_contents.append({
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "md",
+            "backgroundColor": "#E8F5E9",
+            "contents": [
+                {"type": "text", "text": "📦 รายการที่จับคู่ได้:", "size": "xs", "color": "#2E7D32", "weight": "bold"},
+                {"type": "text", "text": parsed_info_msg, "size": "sm", "color": "#333333", "wrap": True}
+            ]
+        })
+
     if suggestion_msg:
-        body_contents.insert(0, {
+        body_contents.append({
             "type": "box",
             "layout": "vertical",
             "paddingAll": "md",
@@ -266,6 +278,8 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None):
                 {"type": "text", "text": suggestion_msg, "size": "sm", "color": "#333333", "wrap": True}
             ]
         })
+
+    body_contents.extend(order_blocks)
 
     bubble = {
         "type": "bubble",
@@ -287,8 +301,6 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None):
 
     return {"type": "flex", "altText": f"สรุปออเดอร์วันที่ {dmy(target_date_str)}", "contents": bubble}
 
-
-# ---------- ระบบจัดการ Webhook ----------
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -313,8 +325,17 @@ def callback():
 def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     
+    # 1. คำสั่งเรียกดูรายการสินค้าทั้งหมด
+    if any(k in msg_text.lower() for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
+        product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
+        for code, name in PRODUCTS_DB.items():
+            product_list_str += f"• [{code.upper()}] {name}\n"
+        product_list_str += "\n💡 ตัวอย่างการสั่ง: 17 ร้าน ABC l2 r3 galaxy2"
+        reply_text(event["replyToken"], product_list_str)
+        return
+
     if msg_text.lower() == "ขอinput":
-        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxy 2 order")
+        reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxy 2\n\nพิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้าทั้งหมด")
         return
 
     if msg_text.startswith("สรุป"):
@@ -344,15 +365,19 @@ def handle_message(event):
                     tokens.pop()
                 
                 order_items = {}
+                parsed_details = []
                 suggestion_parts = []
                 
                 for token in tokens:
                     code, qty, matched, orig_word, target_name = match_product_token(token)
                     if code:
                         order_items[code] = order_items.get(code, 0) + qty
+                        prod_full_name = PRODUCTS_DB.get(code, code)
+                        parsed_details.append(f"• {prod_full_name} ({code.upper()}): {qty} หน่วย")
                         if matched:
-                            suggestion_parts.append(f"คำว่า '{orig_word}' -> ถูกตีความเป็น '{target_name}' ({qty} หน่วย)")
+                            suggestion_parts.append(f"คำว่า '{orig_word}' -> ถูกตีความให้เป็น '{target_name}'")
                 
+                parsed_str = "\n".join(parsed_details) if parsed_details else "ไม่พบรายการสินค้าที่ตรงกัน"
                 sugg_str = " | ".join(suggestion_parts) if suggestion_parts else None
 
                 if order_items:
@@ -360,10 +385,10 @@ def handle_message(event):
                     payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
                     add("orders", payload)
                     matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                    reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str))
+                    reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str, parsed_info_msg=parsed_str))
                     return
 
-    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอInput' เพื่อดูวิธีใช้")
+    reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
 
 
 def handle_postback(event):
