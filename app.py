@@ -172,21 +172,35 @@ def match_product_token(token):
         name_part = m.group(1)
         qty = int(m.group(2))
         
+        # 1. เช็คจาก Alias หรือ Code ตรงๆ ก่อน
         code = ALIAS_MAP.get(name_part)
         if not code and name_part in PRODUCTS_DB:
             code = name_part
             
-        if not code:
-            matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.6)
-            if matches:
-                matched_str = matches[0]
-                code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str][0] if matched_str in [v.lower() for v in PRODUCTS_DB.values()] else None)
-                return (code, qty, True, name_part, PRODUCTS_DB.get(code, code))
-        
         if code in CODES:
-            return (code, qty, False, None, None)
+            return ("exact", code, qty, None)
             
-    return (None, 0, False, None, None)
+        # 2. ถ้าไม่ตรงเป๊ะ ให้หาคำใกล้เคียง หรือคำที่กำกวม (เช่น "galaxy" ที่ตรงกับทั้ง galf และ galr)
+        matching_codes = []
+        for c, full_name in PRODUCTS_DB.items():
+            if name_part in full_name.lower() or name_part in c:
+                matching_codes.append(c)
+        
+        if len(matching_codes) == 1:
+            return ("exact", matching_codes[0], qty, None)
+        elif len(matching_codes) > 1:
+            # เจอหลายตัวเลือกที่มีความหมายคลุมเครือ ส่งกลับไปให้ผู้ใช้เลือก
+            return ("ambiguous", matching_codes, qty, name_part)
+            
+        # 3. ลองใช้ get_close_matches เผื่อสะกดผิด
+        matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.6)
+        if matches:
+            matched_str = matches[0]
+            matched_code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str][0] if matched_str in [v.lower() for v in PRODUCTS_DB.values()] else None)
+            if matched_code:
+                return ("exact", matched_code, qty, None)
+                
+    return ("none", None, 0, None)
 
 
 def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed_info_msg=None):
@@ -328,6 +342,42 @@ def flex_daily_summary(target_date_str, orders_list, suggestion_msg=None, parsed
     return {"type": "flex", "altText": f"สรุปออเดอร์วันที่ {dmy(target_date_str)}", "contents": bubble}
 
 
+def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
+    shop = shop_by_id(shop_id)
+    shop_name = shop["name"] if shop else "ร้านค้า"
+    
+    buttons = []
+    for c in matching_codes:
+        p_name = PRODUCTS_DB.get(c, c)
+        buttons.append({
+            "type": "button",
+            "style": "primary",
+            "color": "#1DB446",
+            "height": "sm",
+            "action": {
+                "type": "postback",
+                "label": f"เลือก: {p_name} ({qty})",
+                "data": f"select|{target_date_str}|{shop_id}|{c}|{qty}"
+            }
+        })
+
+    bubble = {
+        "type": "bubble",
+        "size": "kilo",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "🔍 พบสินค้าใกล้เคียงหลายรายการ", "weight": "bold", "color": "#FF9900", "size": "sm"},
+                {"type": "text", "text": f"คุณพิมพ์คำว่า '{orig_query}{qty}' สำหรับ {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
+                {"type": "text", "text": "กรุณาเลือกประเภทสินค้าที่ต้องการครับ:", "size": "sm", "weight": "bold", "margin": "md", "wrap": True},
+                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
+            ]
+        }
+    }
+    return {"type": "flex", "altText": "กรุณาเลือกรายการสินค้า", "contents": bubble}
+
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -389,25 +439,22 @@ def handle_message(event):
                     status_key = STATUS_MAP[tokens[-1].lower()]
                     tokens.pop()
                 
+                shop_id = get_or_create_shop(shop_name)
                 order_items = {}
                 parsed_details = []
-                suggestion_parts = []
                 
                 for token in tokens:
-                    code, qty, matched, orig_word, target_name = match_product_token(token)
-                    if code:
-                        order_items[code] = order_items.get(code, 0) + qty
-                        prod_full_name = PRODUCTS_DB.get(code, code)
-                        parsed_details.append(f"• {prod_full_name} ({code.upper()}): +{qty}")
-                        if matched:
-                            suggestion_parts.append(f"คำว่า '{orig_word}' -> ถูกตีความให้เป็น '{target_name}'")
-                
-                parsed_str = "\n".join(parsed_details) if parsed_details else "ไม่พบรายการสินค้าที่ตรงกัน"
-                sugg_str = " | ".join(suggestion_parts) if suggestion_parts else None
+                    m_type, code_or_list, qty, orig_query = match_product_token(token)
+                    if m_type == "exact":
+                        order_items[code_or_list] = order_items.get(code_or_list, 0) + qty
+                        prod_full_name = PRODUCTS_DB.get(code_or_list, code_or_list)
+                        parsed_details.append(f"• {prod_full_name} ({code_or_list.upper()}): +{qty}")
+                    elif m_type == "ambiguous":
+                        # พบคำกำกวม ส่งการ์ดตัวเลือกให้ผู้ใช้กดเลือก
+                        reply_flex(event["replyToken"], flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query))
+                        return
 
                 if order_items:
-                    shop_id = get_or_create_shop(shop_name)
-                    
                     existing_order = next((o for o in DATA["orders"] if o["shop_id"] == shop_id and o.get("ddate") == resolved_dt), None)
                     
                     if existing_order:
@@ -426,7 +473,8 @@ def handle_message(event):
                         add("orders", payload)
                         
                     matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                    reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, suggestion_msg=sugg_str, parsed_info_msg=parsed_str))
+                    parsed_str = "\n".join(parsed_details) if parsed_details else ""
+                    reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, parsed_info_msg=parsed_str))
                     return
 
     reply_text(event["replyToken"], "ไม่พบรูปแบบคำสั่งที่ถูกต้อง พิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้า หรือพิมพ์ 'ขอInput' เพื่อดูวิธีใช้งานครับ")
@@ -434,14 +482,14 @@ def handle_message(event):
 
 def handle_postback(event):
     parts = event["postback"]["data"].split("|")
-    if len(parts) == 3 and parts[0] == "status":
+    if parts[0] == "status" and len(parts) == 3:
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
         ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
         if ord_rec:
             matched = [o for o in DATA["orders"] if o.get("ddate") == ord_rec["ddate"]]
             reply_flex(event["replyToken"], flex_daily_summary(ord_rec["ddate"], matched))
-    elif len(parts) == 2 and parts[0] == "delete":
+    elif parts[0] == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         ord_rec = next((o for o in DATA["orders"] if o["id"] == order_id), None)
         dd = ord_rec["ddate"] if ord_rec else None
@@ -455,6 +503,26 @@ def handle_postback(event):
                 reply_text(event["replyToken"], f"🗑️ ลบออเดอร์เรียบร้อย (ไม่เหลือออเดอร์ในวันนี้แล้ว)")
                 return
         reply_text(event["replyToken"], f"🗑️ ลบออเดอร์เรียบร้อย")
+    elif parts[0] == "select" and len(parts) == 5:
+        # กดเลือกจากปุ่มตัวเลือกสินค้ากำกวม
+        resolved_dt = parts[1]
+        shop_id = int(parts[2])
+        code = parts[3]
+        qty = int(parts[4])
+        
+        existing_order = next((o for o in DATA["orders"] if o["shop_id"] == shop_id and o.get("ddate") == resolved_dt), None)
+        if existing_order:
+            oid = existing_order["id"]
+            current_qty = existing_order.get(code, 0)
+            update_db("orders", oid, {code: current_qty + qty})
+        else:
+            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
+            add("orders", payload)
+            
+        matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
+        p_name = PRODUCTS_DB.get(code, code)
+        parsed_str = f"• เลือก: {p_name} ({code.upper()}): +{qty}"
+        reply_flex(event["replyToken"], flex_daily_summary(resolved_dt, matched, parsed_info_msg=parsed_str))
 
 
 def reply_text(rt, text):
