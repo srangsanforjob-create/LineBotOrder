@@ -460,11 +460,11 @@ def flex_carousel_summary(days_data):
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
     chunked_carousels = []
-    for i in range(0, len(bubbles), 6):
-        chunk = bubbles[i:i+6]
+    for i in range(0, len(bubbles), 12):
+        chunk = bubbles[i:i+12]
         chunked_carousels.append({
             "type": "flex",
-            "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//6 + 1})",
+            "altText": f"สรุปรายการจัดส่งรายวัน (ส่วนที่ {i//12 + 1})",
             "contents": {
                 "type": "carousel",
                 "contents": chunk
