@@ -766,7 +766,7 @@ def get_all_valid_days_data():
 
 def get_specific_day_data(date_str):
     _, orders, _ = fetch_fresh_data()
-    day_orders = [o for o in orders if o.get("ddate"] == date_str] # type: ignore
+    day_orders = [o for o in orders if o.get("ddate") == date_str]
     if day_orders:
         return {date_str: day_orders}
     return {}
