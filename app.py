@@ -221,7 +221,7 @@ def handle_message(event):
         qty = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 1
 
         shop_id = get_or_create_shop(shop_name)
-        code = ALIAS_MAP.get(raw_product, "galf") # ค่าเริ่มต้นถ้าแมตช์ไม่ได้
+        code = ALIAS_MAP.get(raw_product, "galf")
 
         # บันทึกลง Supabase
         _, current_orders = fetch_fresh_data()
