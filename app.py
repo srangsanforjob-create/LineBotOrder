@@ -255,11 +255,9 @@ def parse_order_lines(raw_text):
         line_date = global_date
         idx = 0
 
-        # ตรวจสอบว่าโทเค็นแรกเป็นวันที่หรือไม่ (เช่น "18")
         if tokens[0].isdigit() and len(tokens[0]) <= 2:
             line_date = resolve_date(int(tokens[0]))
             idx = 1
-            # อัปเดต global_date เผื่อบรรทัดถัดไปลืมใส่วันที่
             global_date = line_date
 
         if idx >= len(tokens):
@@ -312,7 +310,6 @@ def parse_order_lines(raw_text):
         while idx < len(tokens):
             raw_tok = tokens[idx]
             
-            # รองรับเคสติดกัน เช่น L2, R1 (แยกตัวหนังสือกับตัวเลขออกจากกัน)
             sub_m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", raw_tok)
             if sub_m:
                 p_part = sub_m.group(1)
@@ -727,28 +724,38 @@ def handle_postback(event, default_chat_id):
             chat_type = "group" if "group" in chat_id else "user"
             if shop_id and target_date and code:
                 upsert_order_items(chat_id, chat_type, shop_id, target_date, {code: qty}, forced_status=f_status)
+            res_obj = build_summary_carousel(chat_id)
+            send_reply(reply_token, res_obj)
+            return
 
         elif action == "status":
             order_id = params.get("id")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("id", order_id).execute()
+            res_obj = build_summary_carousel(chat_id)
+            send_reply(reply_token, res_obj)
+            return
             
         elif action == "bulk_status":
             target_date = params.get("date")
             new_status = params.get("status")
             supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
+            res_obj = build_summary_carousel(chat_id)
+            send_reply(reply_token, res_obj)
+            return
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
+            # 1. ลบข้อมูลใน Supabase ออก
             supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
+            # 2. ส่งข้อความธรรมดาไปแทนที่ เพื่อให้ Flex Message การ์ดสรุปหายไปทันที
+            send_reply(reply_token, {"type": "text", "text": f"🗑️ ยกเลิกและลบออเดอร์ทั้งหมดของวันที่ {dmy(target_date)} เรียบร้อยแล้วครับ"})
+            return
             
     except Exception as e:
         print(f"❌ Postback Action Error: {e}")
         send_reply(reply_token, {"type": "text", "text": f"❌ เกิดข้อผิดพลาดในการจัดการระบบ: {e}"})
         return
-
-    res_obj = build_summary_carousel(chat_id)
-    send_reply(reply_token, res_obj)
 
 def handle_message(event, chat_id, chat_type):
     msg = event["message"]
