@@ -481,7 +481,6 @@ def flex_carousel_summary(days_data):
     if not bubbles:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
         
-    # LINE Carousel รองรับสูงสุด 12 Bubbles ต่อหนึ่งข้อความ
     return {"type": "flex", "altText": "สรุปรายการจัดส่งรายวัน", "contents": {"type": "carousel", "contents": bubbles[:12]}}
 
 
@@ -772,7 +771,6 @@ def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     clean_msg = re.sub(r"\s+", "", msg_text).lower()
 
-    # 1. ตรวจสอบคำสั่ง "สรุป" แบบเด็ดขาด
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
         msg_obj = flex_carousel_summary(all_data)
@@ -782,7 +780,6 @@ def handle_message(event):
             reply_flex(event["replyToken"], msg_obj)
         return
 
-    # 2. ตรวจสอบคำสั่ง "สรุป [วันที่]"
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
     date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
     
@@ -801,7 +798,6 @@ def handle_message(event):
                 reply_flex(event["replyToken"], msg_obj)
             return
 
-    # 3. คำสั่งขอรายการสินค้า
     if any(k in clean_msg for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
@@ -814,7 +810,6 @@ def handle_message(event):
         reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2")
         return
 
-    # 4. บันทึกออเดอร์ปกติ
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
@@ -1009,8 +1004,6 @@ def reply_text(rt, text):
 
 def reply_flex(rt, flex):
     res = requests.post(
-        "https://api.line.me/v2/bot/message/`,
-        # corrected inline endpoint below in standard request
         "https://api.line.me/v2/bot/message/reply",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
         json={"replyToken": rt, "messages": [flex]}
