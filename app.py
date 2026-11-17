@@ -243,17 +243,11 @@ def parse_order_lines(raw_text):
         return [], [], ["ไม่พบข้อความคำสั่ง"]
 
     global_date = today().isoformat()
-    start_idx = 0
-
-    if lines[0].isdigit() and len(lines[0]) <= 2:
-        global_date = resolve_date(int(lines[0]))
-        start_idx = 1
-
     parsed_orders = []
     ambiguous_requests = []
     errors = []
 
-    for line in lines[start_idx:]:
+    for line in lines:
         tokens = line.split()
         if not tokens:
             continue
@@ -261,9 +255,12 @@ def parse_order_lines(raw_text):
         line_date = global_date
         idx = 0
 
+        # ตรวจสอบว่าโทเค็นแรกเป็นวันที่หรือไม่ (เช่น "18")
         if tokens[0].isdigit() and len(tokens[0]) <= 2:
             line_date = resolve_date(int(tokens[0]))
             idx = 1
+            # อัปเดต global_date เผื่อบรรทัดถัดไปลืมใส่วันที่
+            global_date = line_date
 
         if idx >= len(tokens):
             errors.append(f"❌ รูปแบบไม่ถูกต้องในบรรทัด: '{line}'")
@@ -314,6 +311,19 @@ def parse_order_lines(raw_text):
         items = {}
         while idx < len(tokens):
             raw_tok = tokens[idx]
+            
+            # รองรับเคสติดกัน เช่น L2, R1 (แยกตัวหนังสือกับตัวเลขออกจากกัน)
+            sub_m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", raw_tok)
+            if sub_m:
+                p_part = sub_m.group(1)
+                qty_part = int(sub_m.group(2))
+                matched_codes = find_matching_skus(p_part)
+                if matched_codes and len(matched_codes) == 1:
+                    code = matched_codes[0]
+                    items[code] = items.get(code, 0) + qty_part
+                    idx += 1
+                    continue
+
             p_name, attached_qty = split_product_qty(raw_tok)
             matched_codes = find_matching_skus(p_name)
 
@@ -730,7 +740,6 @@ def handle_postback(event, default_chat_id):
             
         elif action == "bulk_cancel":
             target_date = params.get("date")
-            # แก้ไขให้ลบโดยระบุ chat_id และ ddate ร่วมกันอย่างแม่นยำ
             supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
             
     except Exception as e:
@@ -769,10 +778,12 @@ def handle_message(event, chat_id, chat_type):
 
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
-            "📖 วิธีการใช้งานบอทสั่งของ (แยกแชทส่วนตัว/กลุ่ม):\n\n"
-            "1️⃣ สั่งออเดอร์ (รองรับหลายบรรทัด):\n"
-            "เจ๊โน แบน 2 order\n"
-            "ครัวบ้านสวน l 3 slip\n\n"
+            "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
+            "1️⃣ สั่งออเดอร์พร้อมกันหลายบรรทัด (รองรับระบุวันที่หน้าชื่อร้าน):\n"
+            "18 แซ่บยโส L2 R1\n"
+            "18 Hangout L1 R1\n"
+            "18 จานหมึก L1\n"
+            "18 แยกบรรทัดทอง L3\n\n"
             "2️⃣ เรียกดูสรุปยอด:\n"
             "• พิมพ์ 'สรุป' หรือ 'สรุป 18'\n\n"
             "📌 พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้าทั้งหมด"
@@ -790,9 +801,11 @@ def handle_message(event, chat_id, chat_type):
     if not parsed_orders and not ambiguous_requests:
         sample_format_msg = (
             "❌ รูปแบบคำสั่งไม่ถูกต้องหรือไม่พบสินค้าในระบบ\n\n"
-            "💡 ตัวอย่าง Format ที่ถูกต้อง:\n"
-            "เจ๊โน แบน 2 order\n"
-            "ครัวบ้านสวน l 3 slip\n\n"
+            "💡 ตัวอย่าง Format ที่ถูกต้อง (หลายบรรทัดพร้อมกัน):\n"
+            "18 แซ่บยโส L2 R1\n"
+            "18 Hangout L1 R1\n"
+            "18 จานหมึก L1\n"
+            "18 แยกบรรทัดทอง L3\n\n"
             "พิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าครับ"
         )
         send_reply(reply_token, {"type": "text", "text": sample_format_msg})
