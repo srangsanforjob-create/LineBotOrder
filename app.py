@@ -245,7 +245,8 @@ def parse_order_lines(raw_text):
     global_date = today().isoformat()
     start_idx = 0
 
-    if lines[0].isdigit():
+    # ถ้าบรรทัดแรกเป็นตัวเลขเดี่ยวๆ (เช่น "18") ให้ถือว่าเป็นวันที่ส่วนกลางของข้อความนี้
+    if lines[0].isdigit() and len(lines[0]) <= 2:
         global_date = resolve_date(int(lines[0]))
         start_idx = 1
 
@@ -261,11 +262,13 @@ def parse_order_lines(raw_text):
         line_date = global_date
         idx = 0
 
-        if tokens[0].isdigit():
+        # เช็กว่าหน้าบรรทัดระบุวันที่หรือไม่ (เช่น "18 เจ๊โน แบน 2")
+        if tokens[0].isdigit() and len(tokens[0]) <= 2:
             line_date = resolve_date(int(tokens[0]))
             idx = 1
 
         if idx >= len(tokens):
+            errors.append(f"❌ รูปแบบไม่ถูกต้องในบรรทัด: '{line}'")
             continue
 
         line_status = None
@@ -278,12 +281,11 @@ def parse_order_lines(raw_text):
             tokens.pop()
 
         if idx >= len(tokens):
+            errors.append(f"❌ ไม่พบข้อมูลสินค้าในบรรทัด: '{line}'")
             continue
 
-        shop_tokens = []
+        # ตรวจสอบว่าบรรทัดนี้มีสินค้า/คีย์เวิร์ดที่รู้จักหรือไม่
         has_valid_product = False
-        
-        # ตรวจสอบเบื้องต้นว่าในบรรทัดนี้มีชื่อสินค้าหรือคีย์เวิร์ดที่รู้จักหรือไม่
         for t_check in tokens[idx:]:
             p_check, _ = split_product_qty(t_check)
             if find_matching_skus(p_check):
@@ -291,9 +293,10 @@ def parse_order_lines(raw_text):
                 break
 
         if not has_valid_product:
-            errors.append(f"❌ ไม่พบสินค้าหรือรูปแบบที่ไม่ถูกต้องในบรรทัด: '{line}'")
+            errors.append(f"❌ ไม่พบสินค้าในระบบสำหรับบรรทัด: '{line}'")
             continue
 
+        shop_tokens = []
         while idx < len(tokens):
             p_name, _ = split_product_qty(tokens[idx])
             if find_matching_skus(p_name):
@@ -755,12 +758,10 @@ def handle_message(event):
     if text_lower in ["คู่มือ", "ช่วยเหลือ", "help"]:
         help_text = (
             "📖 วิธีการใช้งานบอทสั่งของ:\n\n"
-            "1️⃣ ตัวอย่าง Format การสั่งออเดอร์ที่ถูกต้อง:\n"
-            "• [ชื่อร้าน] [สินค้า] [จำนวน] [สถานะ(ถ้ามี)]\n"
-            "ตัวอย่าง:\n"
-            "👉 เจ๊โน แบน 2 order\n"
-            "👉 ครัวบ้านสวน l 3 slip\n"
-            "👉 18 เจ๊โน l 2\n\n"
+            "1️⃣ สั่งออเดอร์ทีละหลายบรรทัดพร้อมกัน:\n"
+            "เจ๊โน แบน 2 order\n"
+            "ครัวบ้านสวน l 3 slip\n"
+            "ร้านสะออน r 1\n\n"
             "2️⃣ เรียกดูสรุปยอด:\n"
             "• พิมพ์ 'สรุป' หรือ 'สรุป 18'\n\n"
             "📌 พิมพ์ 'ดูรหัส' เพื่อดูชื่อย่อสินค้าทั้งหมด"
@@ -775,16 +776,12 @@ def handle_message(event):
 
     parsed_orders, ambiguous_requests, errors = parse_order_lines(text)
 
-    # 🛑 ถ้าพิมพ์ไม่ตรงกับสินค้าหรือรูปแบบใดๆ เลย จะไม่ขึ้นสรุป แต่จะส่ง Format ตัวอย่างกลับไปทันที
     if not parsed_orders and not ambiguous_requests:
         sample_format_msg = (
             "❌ รูปแบบคำสั่งไม่ถูกต้องหรือไม่พบสินค้าในระบบ\n\n"
-            "💡 ตัวอย่าง Format ที่ถูกต้อง:\n"
-            "• [ชื่อร้าน] [สินค้า] [จำนวน] [สถานะ]\n\n"
-            "ตัวอย่างการใช้งาน:\n"
-            "👉 เจ๊โน แบน 2 order\n"
-            "👉 ครัวบ้านสวน l 3 slip\n"
-            "👉 18 เจ๊โน l 2\n\n"
+            "💡 ตัวอย่าง Format ที่ถูกต้อง (สั่งหลายบรรทัดได้):\n"
+            "เจ๊โน แบน 2 order\n"
+            "ครัวบ้านสวน l 3 slip\n\n"
             "พิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน หรือพิมพ์ 'ดูรหัส' เพื่อดูรายการสินค้าครับ"
         )
         send_reply(reply_token, {"type": "text", "text": sample_format_msg})
