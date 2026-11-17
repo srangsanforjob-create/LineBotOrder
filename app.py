@@ -3,12 +3,12 @@ import json
 import re
 import base64
 import hashlib
+import hmac
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 from flask import Flask, request, abort
 import requests
 from supabase import create_client, Client
-from difflib import get_close_matches
 
 # --- CONFIG ---
 SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
@@ -20,16 +20,25 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 TZ = ZoneInfo("Asia/Bangkok")
 app = Flask(__name__)
 
-# --- PRODUCT DATABASE & MAPPINGS ---
+# --- FULL PRODUCT DATABASE & MAPPINGS ---
 PRODUCTS_DB = {
+    # Draft Beer
     "l": "Lager", "r": "Rose", "d": "Dunkel",
+    # Glasses & Towers
     "m": "MUG", "p": "PINE", "j": "JUG", "t": "TOWER",
+    # Dispensers
     "h40l": "Hoshizaki 40L", "h90": "Hoshizaki 90L", "h120": "Hoshizaki 120L",
-    "sct": "Stanless Counter", "st": "Stanless Table",
+    # Stainless Furniture
+    "sct": "Stainless Counter", "st": "Stainless Table",
+    # POSM & Marketing
     "ast": "A-Stand", "std": "Standee", "aa5": "อะคริลิก A5", "aa6": "อะคริลิก A6",
+    # Galaxy
     "galf": "Galaxy แบน 350ml", "galr": "Galaxy กลม 700ml",
+    # Tendo
     "tend3": "Tendo 360ml", "tend7": "Tendo 700ml",
+    # Kacha
     "kach": "Kacha 375ml",
+    # Soju
     "sojy": "Soju โยเกิร์ต", "sojp": "Soju พีช",
     "sojg": "Soju องุ่น", "sojf": "Soju เกรปฟรุ๊ต", "sojs": "Soju สตรอเบอรี่"
 }
@@ -37,19 +46,37 @@ PRODUCTS_DB = {
 CODES = list(PRODUCTS_DB.keys())
 
 ALIAS_MAP = {
-    "lager": "l", "l": "l", "rose": "r", "r": "r", "dunkel": "d", "d": "d",
-    "galaxyแบน": "galf", "galf": "galf", "galaxyกลม": "galr", "galr": "galr",
+    "lager": "l", "l": "l",
+    "rose": "r", "r": "r",
+    "dunkel": "d", "d": "d",
+    "mug": "m", "m": "m",
+    "pine": "p", "p": "p",
+    "jug": "j", "j": "j",
+    "tower": "t", "t": "t",
+    "h40l": "h40l", "h90": "h90", "h120": "h120",
+    "counter": "sct", "sct": "sct",
+    "table": "st", "st": "st",
+    "astand": "ast", "ast": "ast",
+    "standee": "std", "std": "std",
+    "galaxyแบน": "galf", "galf": "galf", "gal-f": "galf",
+    "galaxyกลม": "galr", "galr": "galr", "gal-r": "galr",
+    "tendo360": "tend3", "tend3": "tend3",
+    "tendo700": "tend7", "tend7": "tend7",
+    "kacha": "kach", "kach": "kach",
+    "sojuyogurt": "sojy", "sojy": "sojy",
+    "sojupeach": "sojp", "sojp": "sojp",
+    "sojugrape": "sojg", "sojg": "sojg",
+    "soju grapefruit": "sojf", "sojf": "sojf",
+    "sojustrawberry": "sojs", "sojs": "sojs"
 }
 
-STATUS_MAP = {
-    "order": "ordered", "ordered": "ordered",
-    "slip": "slip", "pending": "pending"
-}
-
+# --- STATUSES (เพิ่ม credit เข้าไปเรียบร้อย) ---
 STATUSES = {
     "pending": ("⏳", "ยังไม่ได้ Order", "#FF9900"),
     "ordered": ("✅", "Order แล้ว", "#06C755"),
     "slip": ("👍", "อัปสลิปแล้ว", "#00B900"),
+    "credit": ("💳", "ซื้อเงินเชื่อ / เครดิต", "#0099FF"),
+    "overdue": ("🚨", "เลยกำหนดชำระ / Overdue", "#FF334B"),
 }
 
 def num(v):
@@ -76,11 +103,16 @@ def get_or_create_shop(name):
         dn = "ร้าน " + dn
     s = next((s for s in shops if s["name"] == dn), None)
     if s:
-        return s["id"]
+        return s
     try:
-        res = supabase.table("shops").insert({"name": dn, "aliases": ""}).execute()
+        res = supabase.table("shops").insert({
+            "name": dn, 
+            "aliases": "", 
+            "credit_limit": 50000, 
+            "current_balance": 0
+        }).execute()
         if res.data:
-            return res.data[0]["id"]
+            return res.data[0]
     except Exception as e:
         print(f"❌ Shop Create Error: {e}")
     return None
@@ -129,6 +161,9 @@ def build_summary_carousel():
     for o in orders:
         sh = shop_by_id(o["shop_id"])
         shop_name = sh["name"] if sh else "ร้านค้า"
+        credit_limit = num(sh.get("credit_limit", 50000)) if sh else 50000
+        current_balance = num(sh.get("current_balance", 0)) if sh else 0
+        
         date_str = o.get("ddate", "ไม่ระบุ")
         status_key = o.get("status", "pending")
         icon, label, color = STATUSES.get(status_key, ("⏳", "Pending", "#FF9900"))
@@ -165,6 +200,7 @@ def build_summary_carousel():
                 "contents": [
                     {"type": "text", "text": shop_name, "weight": "bold", "size": "md", "color": "#111111"},
                     {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color, "margin": "xs"},
+                    {"type": "text", "text": f"💳 วงเงินคงเหลือ: {credit_limit - current_balance:,.2f} / {credit_limit:,.2f} ฿", "size": "xxs", "color": "#888888", "margin": "sm"},
                     {"type": "separator", "margin": "md"},
                     {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": item_rows}
                 ]
@@ -211,7 +247,7 @@ def handle_message(event):
         send_reply(reply_token, res_obj)
         return
 
-    # รูปแบบการพิมพ์ออเดอร์ เช่น: 17 เจ๊โน galaxyแบน 2
+    # รูปแบบการพิมพ์ออเดอร์ เช่น: 17 เจ๊โน galf 2
     parts = text.split()
     if len(parts) >= 3 and parts[0].isdigit():
         d_val = int(parts[0])
@@ -220,10 +256,24 @@ def handle_message(event):
         raw_product = parts[2].lower()
         qty = int(parts[3]) if len(parts) >= 4 and parts[3].isdigit() else 1
 
-        shop_id = get_or_create_shop(shop_name)
+        shop = get_or_create_shop(shop_name)
+        shop_id = shop["id"]
+
+        # ตรวจสอบวงเงิน (Credit Limit Check)
+        credit_limit = num(shop.get("credit_limit", 50000))
+        current_balance = num(shop.get("current_balance", 0))
+        estimated_cost = qty * 500  # ตัวอย่างราคาประเมินต่อหน่วย
+        
+        if current_balance + estimated_cost > credit_limit:
+            send_reply(reply_token, {
+                "type": "text", 
+                "text": f"⚠️ ขออภัยครับ วงเงินร้าน {shop_name} ไม่พอสำหรับการสั่งซื้อนี้!\n(วงเงินจำกัด: {credit_limit:,.2f} ฿, ยอดใช้ไป: {current_balance:,.2f} ฿)"
+            })
+            return
+
         code = ALIAS_MAP.get(raw_product, "galf")
 
-        # บันทึกลง Supabase
+        # บันทึกลง Supabase (กำหนดสถานะเริ่มต้นเป็น credit ได้ หรือคง pending ไว้ตามต้องการ)
         _, current_orders = fetch_fresh_data()
         existing = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
         
@@ -232,8 +282,11 @@ def handle_message(event):
             curr_q = num(existing.get(code, 0))
             supabase.table("orders").update({code: curr_q + qty}).eq("id", oid).execute()
         else:
-            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
+            payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "credit", code: qty}
             supabase.table("orders").insert(payload).execute()
+
+        # อัปเด่ายอดเงินสะสมของร้านใน Supabase
+        supabase.table("shops").update({"current_balance": current_balance + estimated_cost}).eq("id", shop_id).execute()
 
         # ตอบกลับด้วยการ์ดสรุปผลทันที
         res_obj = build_summary_carousel()
