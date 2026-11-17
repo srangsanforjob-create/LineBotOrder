@@ -13,6 +13,7 @@ import requests
 from flask import Flask, abort, request
 from supabase import create_client, Client
 
+# --- CONFIG & INITIALIZATION ---
 SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
 TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
 
@@ -21,7 +22,9 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TZ = ZoneInfo("Asia/Bangkok")
+app = Flask(__name__)
 
+# --- PRODUCT DATABASE & MAPPINGS ---
 PRODUCTS_DB = {
     "l": "Lager", "r": "Rose", "d": "Dunkel",
     "m": "MUG", "p": "PINE", "j": "JUG", "t": "TOWER",
@@ -59,16 +62,14 @@ ALIAS_MAP = {
     "standee": "std", "std": "std",
     "aa5": "aa5", "aa6": "aa6",
     "galaxyแบน": "galf", "galaxy350": "galf", "galaxy350ml": "galf", "galaxyเล็ก": "galf",
-    "glxแบน": "galf", "glaxแบน": "galf", "glx350": "galf", "glax350": "galf",
-    "glxเล็ก": "galf", "glaxเล็ก": "galf",
-    "กาแล็กซีแบน": "galf", "กาแล็กซี่แบน": "galf", "กาแลaxyแบน": "galf", "galf": "galf",
+    "glxแบน": "galf", "glaxแบน": "galf", "glx350": "galf", "glax350": "galf", "glxเล็ก": "galf",
+    "กาแล็กซีแบน": "galf", "กาแล็กซี่แบน": "galf", "galf": "galf",
     "galaxyกลม": "galr", "galaxy700": "galr", "galaxy700ml": "galr", "galaxyใหญ่": "galr",
-    "glxกลม": "galr", "glaxกลม": "galr", "glx700": "galr", "glax700": "galr",
-    "glxใหญ่": "galr", "glaxใหญ่": "galr",
-    "กาแล็กซีกลม": "galr", "กาแล็กซี่กลม": "galr", "กาแลaxyกลม": "galr", "galr": "galr",
-    "tendo360": "tend3", "tendo360ml": "tend3", "tend3": "tend3",
-    "tendo700": "tend7", "tendo700ml": "tend7", "tend7": "tend7",
-    "kacha": "kach", "kacha375": "kach", "kach": "kach",
+    "glxกลม": "galr", "glaxกลม": "galr", "glx700": "galr", "glax700": "galr", "glxใหญ่": "galr",
+    "กาแล็กซีกลม": "galr", "กาแล็กซี่กลม": "galr", "galr": "galr",
+    "tendo360": "tend3", "tend3": "tend3",
+    "tendo700": "tend7", "tend7": "tend7",
+    "kacha": "kach", "kach": "kach",
     "sojuโยเกิร์ต": "sojy", "sojuพีช": "sojp", "sojuองุ่น": "sojg", "sojuเกรปฟรุ๊ต": "sojf", "sojuสตรอเบอรี่": "sojs",
     "โซจูโยเกิร์ต": "sojy", "โซจูพีช": "sojp", "โซจูองุ่น": "sojg", "โซจูเกรปฟรุ๊ต": "sojf", "โซจูสตรอเบอรี่": "sojs",
     "sojy": "sojy", "sojp": "sojp", "sojg": "sojg", "sojf": "sojf", "sojs": "sojs"
@@ -78,7 +79,7 @@ CODES = list(PRODUCTS_DB.keys())
 
 STATUS_MAP = {
     "order": "ordered", "ordered": "ordered",
-    "slipt": "slip", "slip": "slip",
+    "slip": "slip", "slipt": "slip",
     "credit": "credit",
     "over": "overdue", "overdue": "overdue",
     "limit": "limit", "short": "limit",
@@ -94,9 +95,8 @@ STATUSES = {
     "limit": ("❗", "วงเงินไม่พอ", "#FF334B"),
 }
 
-app = Flask(__name__)
 
-
+# --- UTILITY & DB FUNCTIONS ---
 def num(v):
     try:
         return int(v)
@@ -108,51 +108,58 @@ def fetch_fresh_data():
     try:
         shops_res = supabase.table("shops").select("*").execute()
         orders_res = supabase.table("orders").select("*").execute()
-        pending_res = supabase.table("pending").select("*").execute()
-
         shops = shops_res.data or []
         orders = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (orders_res.data or [])]
-        pending = [{k: num(r[k]) if k in CODES else r[k] for k in r} for r in (pending_res.data or [])]
-        return shops, orders, pending
+        return shops, orders
     except Exception as e:
-        print(f"❌ Fetch Error: {e}")
-        return [], [], []
+        print(f"❌ DB Fetch Error: {e}")
+        return [], []
 
 
-def add(tab, d):
-    payload = {k: v for k, v in d.items() if k != "_row"}
-    if "id" in payload:
-        payload.pop("id")
-    res = supabase.table(tab).insert(payload).execute()
-    if res.data:
-        inserted = {k: num(res.data[0][k]) if k in CODES else res.data[0][k] for k in res.data[0]}
-        return inserted
-    return d
+def add_order_db(payload):
+    try:
+        res = supabase.table("orders").insert(payload).execute()
+        return res.data
+    except Exception as e:
+        print(f"❌ DB Insert Error: {e}")
+        return None
 
 
-def update_db(tab, oid, payload):
-    supabase.table(tab).update(payload).eq("id", oid).execute()
+def update_order_db(oid, payload):
+    try:
+        supabase.table("orders").update(payload).eq("id", oid).execute()
+    except Exception as e:
+        print(f"❌ DB Update Error: {e}")
 
 
-def delete_db(tab, oid):
-    supabase.table(tab).delete().eq("id", oid).execute()
+def delete_order_db(oid):
+    try:
+        supabase.table("orders").delete().eq("id", oid).execute()
+    except Exception as e:
+        print(f"❌ DB Delete Error: {e}")
 
 
-def delete_orders_by_date(target_date_str):
-    supabase.table("orders").delete().eq("ddate", target_date_str).execute()
+def delete_orders_by_date_db(target_date_str):
+    try:
+        supabase.table("orders").delete().eq("ddate", target_date_str).execute()
+    except Exception as e:
+        print(f"❌ DB Delete Date Error: {e}")
 
 
-def update_status_by_date(target_date_str, new_status):
-    supabase.table("orders").update({"status": new_status}).eq("ddate", target_date_str).execute()
+def update_status_by_date_db(target_date_str, new_status):
+    try:
+        supabase.table("orders").update({"status": new_status}).eq("ddate", target_date_str).execute()
+    except Exception as e:
+        print(f"❌ DB Update Status Date Error: {e}")
 
 
 def get_order_by_id(oid):
-    _, orders, _ = fetch_fresh_data()
+    _, orders = fetch_fresh_data()
     return next((o for o in orders if str(o.get("id")) == str(oid)), None)
 
 
 def shop_by_id(sid):
-    shops, _, _ = fetch_fresh_data()
+    shops, _ = fetch_fresh_data()
     return next((s for s in shops if str(s.get("id")) == str(sid)), None)
 
 
@@ -184,17 +191,23 @@ def resolve_date(day_val, month_val=None, year_val=None):
 
 
 def get_or_create_shop(name):
-    shops, _, _ = fetch_fresh_data()
+    shops, _ = fetch_fresh_data()
     dn = name.strip()
     if not dn.startswith("ร้าน"):
         dn = "ร้าน " + dn
     s = next((s for s in shops if s["name"] == dn), None)
     if s:
         return s["id"]
-    new_shop = add("shops", {"name": dn, "aliases": ""})
-    return new_shop.get("id")
+    try:
+        res = supabase.table("shops").insert({"name": dn, "aliases": ""}).execute()
+        if res.data:
+            return res.data[0]["id"]
+    except Exception as e:
+        print(f"❌ Shop Create Error: {e}")
+    return None
 
 
+# --- TEXT PARSING & TOKENIZATION ---
 def normalize_tokens(raw_tokens):
     merged = []
     i = 0
@@ -232,7 +245,6 @@ def normalize_tokens(raw_tokens):
 
 def match_product_token(token):
     clean_token = re.sub(r"\s+", "", token.lower().strip())
-
     if clean_token in ALIAS_MAP:
         return ("exact", ALIAS_MAP[clean_token], 1, token)
 
@@ -255,7 +267,6 @@ def match_product_token(token):
 
     if name_part in ALIAS_MAP:
         return ("exact", ALIAS_MAP[name_part], qty, name_part)
-
     if name_part in GROUP_KEYWORDS:
         return ("ambiguous", GROUP_KEYWORDS[name_part], qty, name_part)
 
@@ -278,9 +289,9 @@ def match_product_token(token):
     return ("ambiguous", ["galf", "galr"], qty, name_part)
 
 
+# --- FLEX MESSAGE BUILDERS ---
 def build_day_bubble(target_date_str, orders_list):
     order_blocks = []
-
     for ord_rec in orders_list:
         sh = shop_by_id(ord_rec["shop_id"])
         sh_name = sh["name"] if sh else "ร้านค้า"
@@ -315,15 +326,7 @@ def build_day_bubble(target_date_str, orders_list):
                     "layout": "horizontal",
                     "contents": [
                         {"type": "text", "text": sh_name, "weight": "bold", "size": "md", "color": "#111111", "flex": 3},
-                        {
-                            "type": "text",
-                            "text": f"{icon} {status_label}",
-                            "size": "xs",
-                            "weight": "bold",
-                            "color": status_color,
-                            "align": "end",
-                            "flex": 2
-                        }
+                        {"type": "text", "text": f"{icon} {status_label}", "size": "xs", "weight": "bold", "color": status_color, "align": "end", "flex": 2}
                     ]
                 },
                 {"type": "box", "layout": "vertical", "spacing": "2px", "contents": item_rows},
@@ -351,7 +354,7 @@ def build_day_bubble(target_date_str, orders_list):
                             "contents": [
                                 {"type": "button", "style": "primary", "color": "#0088CC", "height": "sm", "action": {"type": "postback", "label": "💳 Credit", "data": f"status|credit|{order_id}"}},
                                 {"type": "button", "style": "primary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "⚠️ Overdue", "data": f"status|overdue|{order_id}"}},
-                                {"type": "button", "style": "primary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "❗ วงเงินไม่พอ", "data": f"status|limit|{order_id}"}}
+                                {"type": "button", "style": "primary", "color": "#FF334B", "height": "sm", "action": {"type": "postback", "label": "❗ วงเงิน", "data": f"status|limit|{order_id}"}}
                             ]
                         },
                         {
@@ -359,8 +362,8 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
-                                {"type": "button", "style": "primary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขรายการ", "data": f"edit_menu|{order_id}"}},
-                                {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
+                                {"type": "button", "style": "primary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไข", "data": f"edit_menu|{order_id}"}},
+                                {"type": "button", "style": "primary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบ", "data": f"delete|{order_id}"}}
                             ]
                         }
                     ]
@@ -452,8 +455,7 @@ def flex_carousel_summary(days_data):
 
     if not bubbles:
         return {"type": "text", "text": "📭 ยังไม่มีข้อมูลออเดอร์ในระบบ"}
-        
-    # LINE Carousel รองรับสูงสุด 12 Bubbles ต่อ 1 Carousel
+
     flex_messages = []
     for i in range(0, len(bubbles), 10):
         chunk = bubbles[i:i+10]
@@ -468,33 +470,9 @@ def flex_carousel_summary(days_data):
     return flex_messages
 
 
-def send_reply_response(rt, res_obj):
-    messages = []
-    if isinstance(res_obj, list):
-        messages = res_obj[:5]
-    elif isinstance(res_obj, dict) and "type" in res_obj:
-        messages = [res_obj]
-    else:
-        messages = [{"type": "text", "text": str(res_obj)}]
-
-    if not messages:
-        return
-
-    print(f"DEBUG [send_reply_response]: Sending {len(messages)} message(s) with token {rt[:10]}...")
-    res = requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
-        json={"replyToken": rt, "messages": messages}
-    )
-    print(f"DEBUG [send_reply_response]: Status code = {res.status_code}, Response = {res.text}")
-    if res.status_code != 200:
-        print(f"❌ LINE Reply Error ({res.status_code}): {res.text}")
-
-
 def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_query):
     shop = shop_by_id(shop_id)
     shop_name = shop["name"] if shop else "ร้านค้า"
-
     buttons = []
     for c in matching_codes:
         p_name = PRODUCTS_DB.get(c, c)
@@ -533,22 +511,7 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
 def flex_edit_menu(order_id):
     ord_rec = get_order_by_id(order_id)
     if not ord_rec:
-        return {
-            "type": "flex",
-            "altText": "ไม่พบข้อมูลออเดอร์",
-            "contents": {
-                "type": "bubble",
-                "size": "kilo",
-                "body": {
-                    "type": "box",
-                    "layout": "vertical",
-                    "contents": [
-                        {"type": "text", "text": "⚠️ ไม่พบข้อมูลออเดอร์นี้", "weight": "bold", "color": "#FF334B", "size": "md"},
-                        {"type": "text", "text": f"รหัสออเดอร์ #{order_id} อาจถูกลบไปแล้ว", "size": "xs", "color": "#666666", "margin": "sm", "wrap": True}
-                    ]
-                }
-            }
-        }
+        return {"type": "text", "text": "⚠️ ไม่พบข้อมูลออเดอร์นี้ อาจถูกลบไปแล้ว"}
 
     sh = shop_by_id(ord_rec["shop_id"])
     sh_name = sh["name"] if sh else "ร้านค้า"
@@ -570,14 +533,8 @@ def flex_edit_menu(order_id):
                         "layout": "horizontal",
                         "spacing": "xs",
                         "contents": [
-                            {
-                                "type": "button", "style": "primary", "color": "#555555", "height": "sm",
-                                "action": {"type": "postback", "label": "🔄 เปลี่ยนสินค้า", "data": f"edit_swap_menu|{order_id}|{code}|{qty}"}
-                            },
-                            {
-                                "type": "button", "style": "primary", "color": "#555555", "height": "sm",
-                                "action": {"type": "postback", "label": "🔢 ปรับจำนวน", "data": f"edit_qty_menu|{order_id}|{code}"}
-                            }
+                            {"type": "button", "style": "primary", "color": "#555555", "height": "sm", "action": {"type": "postback", "label": "🔄 เปลี่ยน", "data": f"edit_swap_menu|{order_id}|{code}|{qty}"}},
+                            {"type": "button", "style": "primary", "color": "#555555", "height": "sm", "action": {"type": "postback", "label": "🔢 ปรับจำนวน", "data": f"edit_qty_menu|{order_id}|{code}"}}
                         ]
                     }
                 ]
@@ -589,7 +546,7 @@ def flex_edit_menu(order_id):
     item_sections.append({"type": "separator", "margin": "md"})
     item_sections.append({
         "type": "button", "style": "primary", "color": "#1399FF", "height": "sm", "margin": "md",
-        "action": {"type": "postback", "label": "➕ เพิ่มสินค้าอื่นในออเดอร์", "data": f"edit_add_menu|{order_id}"}
+        "action": {"type": "postback", "label": "➕ เพิ่มสินค้าอื่น", "data": f"edit_add_menu|{order_id}"}
     })
 
     return {
@@ -649,7 +606,6 @@ def flex_qty_menu(order_id, code):
     ord_rec = get_order_by_id(order_id)
     curr_qty = num(ord_rec.get(code, 0)) if ord_rec else 0
     p_name = PRODUCTS_DB.get(code, code)
-
     dec_qty = max(0, curr_qty - 1)
     inc_qty = curr_qty + 1
 
@@ -736,6 +692,31 @@ def flex_add_item_menu(order_id):
     }
 
 
+# --- RESPONSE DISPATCHER ---
+def send_reply_response(rt, res_obj):
+    messages = []
+    if isinstance(res_obj, list):
+        messages = res_obj[:5]
+    elif isinstance(res_obj, dict) and "type" in res_obj:
+        messages = [res_obj]
+    else:
+        messages = [{"type": "text", "text": str(res_obj)}]
+
+    if not messages:
+        return
+
+    print(f"DEBUG [send_reply_response]: Sending {len(messages)} message(s) with token {rt[:10]}...")
+    res = requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        json={"replyToken": rt, "messages": messages}
+    )
+    print(f"DEBUG [send_reply_response]: Status code = {res.status_code}, Response = {res.text}")
+    if res.status_code != 200:
+        print(f"❌ LINE Reply Error ({res.status_code}): {res.text}")
+
+
+# --- WEBHOOK ENDPOINT ---
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -749,26 +730,27 @@ def callback():
         abort(400)
 
     try:
-        for event in json.loads(body).get("events", []):
+        events = json.loads(body).get("events", [])
+        for event in events:
             if event.get("type") == "message":
                 handle_message(event)
             elif event.get("type") == "postback":
                 handle_postback(event)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Webhook Error: {e}")
         traceback.print_exc()
     return "OK", 200
 
 
 def get_all_valid_days_data():
-    _, orders, _ = fetch_fresh_data()
+    _, orders = fetch_fresh_data()
     all_dates = set(o.get("ddate") for o in orders if o.get("ddate"))
     sorted_dates = sorted(list(all_dates))
     return {sd: [o for o in orders if o.get("ddate") == sd] for sd in sorted_dates}
 
 
 def get_specific_day_data(date_str):
-    _, orders, _ = fetch_fresh_data()
+    _, orders = fetch_fresh_data()
     day_orders = [o for o in orders if o.get("ddate") == date_str]
     if day_orders:
         return {date_str: day_orders}
@@ -781,20 +763,20 @@ def handle_message(event):
     msg_text = event["message"].get("text", "").strip()
     clean_msg = re.sub(r"\s+", "", msg_text).lower()
 
+    # 1. Command: "สรุป"
     if clean_msg == "สรุป":
         all_data = get_all_valid_days_data()
         res_obj = flex_carousel_summary(all_data)
         send_reply_response(event["replyToken"], res_obj)
         return
 
+    # 2. Command: Specific date summary (e.g. "สรุป 17" or "17")
     clean_sum_text = re.sub(r"^สรุป\s*", "", msg_text).strip()
     date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", clean_sum_text)
-    
     if date_match and len(msg_text.split()) <= 2 and not any(k in msg_text for k in ["ร้าน", "ออเดอร์", "กลม", "แบน", "l", "r", "d"]):
         d_val = int(date_match.group(1))
         m_val = int(date_match.group(2)) if date_match.group(2) else None
         y_val = int(date_match.group(3)) if date_match.group(3) else None
-        
         resolved_dt = resolve_date(d_val, m_val, y_val)
         if resolved_dt:
             day_data = get_specific_day_data(resolved_dt)
@@ -802,18 +784,21 @@ def handle_message(event):
             send_reply_response(event["replyToken"], res_obj)
             return
 
+    # 3. Command: Product list info
     if any(k in clean_msg for k in ["ขอรายการสินค้า", "รายการสินค้า", "รหัสสินค้า"]):
         product_list_str = "📋 รายการสินค้าและรหัสคีย์เวิร์ดทั้งหมด:\n\n"
         for code, name in PRODUCTS_DB.items():
             product_list_str += f"• [{code.upper()}] {name}\n"
-        product_list_str += "\n💡 ตัวอย่าง: 18 ข้าวใหม่ galaxyแบน 2"
+        product_list_str += "\n💡 ตัวอย่าง: 17 เจ๊โน galaxyแบน 2"
         send_reply_response(event["replyToken"], {"type": "text", "text": product_list_str})
         return
 
+    # 4. Command: Input help
     if clean_msg == "ขอinput":
-        send_reply_response(event["replyToken"], {"type": "text", "text": "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 18 ข้าวใหม่ galaxyแบน 2"})
+        send_reply_response(event["replyToken"], {"type": "text", "text": "พิมพ์: [วันที่] [ชื่อร้าน] [สินค้า จำนวน]\nเช่น: 17 เจ๊โน galaxyแบน 2"})
         return
 
+    # 5. Order parsing: e.g. "17 เจ๊โน galaxyแบน 2"
     parts = msg_text.split()
     if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2})(?:/(\d{2,4}))?)?$", parts[0])
@@ -821,7 +806,6 @@ def handle_message(event):
             d_val = int(date_match.group(1))
             m_val = int(date_match.group(2)) if date_match.group(2) else None
             y_val = int(date_match.group(3)) if date_match.group(3) else None
-            
             resolved_dt = resolve_date(d_val, m_val, y_val)
             if resolved_dt:
                 if parts[1] == "ร้าน" and len(parts) >= 4:
@@ -833,6 +817,9 @@ def handle_message(event):
 
                 tokens = normalize_tokens(raw_item_tokens)
                 shop_id = get_or_create_shop(shop_name)
+                if not shop_id:
+                    send_reply_response(event["replyToken"], {"type": "text", "text": "❌ ไม่สามารถสร้างหรือหาร้านค้านี้ได้"})
+                    return
 
                 status_key = "pending"
                 if tokens and tokens[-1].lower() in STATUS_MAP:
@@ -850,16 +837,16 @@ def handle_message(event):
                         return
 
                 if order_items:
-                    _, current_orders, _ = fetch_fresh_data()
+                    _, current_orders = fetch_fresh_data()
                     existing_order = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
                     if existing_order:
                         oid = existing_order["id"]
                         update_payload = {c: num(existing_order.get(c, 0)) + order_items.get(c, 0) for c in CODES if order_items.get(c, 0) > 0}
                         if update_payload:
-                            update_db("orders", oid, update_payload)
+                            update_order_db(oid, update_payload)
                     else:
                         payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": status_key, **order_items}
-                        add("orders", payload)
+                        add_order_db(payload)
 
                     res_obj = flex_carousel_summary(get_all_valid_days_data())
                     send_reply_response(event["replyToken"], res_obj)
@@ -880,92 +867,50 @@ def handle_postback(event):
         send_reply_response(event["replyToken"], res_obj)
 
     if action == "status" and len(parts) == 3:
-        order_id = int(parts[2])
-        update_db("orders", order_id, {"status": parts[1]})
+        update_order_db(int(parts[2]), {"status": parts[1]})
         reply_after_action()
-
     elif action == "day_status" and len(parts) == 3:
-        new_status = parts[1]
-        target_date_str = parts[2]
-        update_status_by_date(target_date_str, new_status)
+        update_status_by_date_db(parts[2], parts[1])
         reply_after_action()
-
     elif action == "day_delete_confirm" and len(parts) == 2:
-        target_date_str = parts[1]
-        confirm_flex = flex_confirm_delete_day(target_date_str)
-        send_reply_response(event["replyToken"], confirm_flex)
-
+        send_reply_response(event["replyToken"], flex_confirm_delete_day(parts[1]))
     elif action == "day_delete_do" and len(parts) == 2:
-        target_date_str = parts[1]
-        delete_orders_by_date(target_date_str)
+        delete_orders_by_date_db(parts[1])
         reply_after_action()
-
     elif action == "cancel":
         reply_after_action()
-
     elif action == "delete" and len(parts) == 2:
-        order_id = int(parts[1])
-        delete_db("orders", order_id)
+        delete_order_db(int(parts[1]))
         reply_after_action()
-
     elif action == "edit_menu" and len(parts) == 2:
-        order_id = int(parts[1])
-        edit_flex = flex_edit_menu(order_id)
-        send_reply_response(event["replyToken"], edit_flex)
-
+        send_reply_response(event["replyToken"], flex_edit_menu(int(parts[1])))
     elif action == "edit_swap_menu" and len(parts) == 4:
-        order_id = int(parts[1])
-        old_code = parts[2]
-        qty = int(parts[3])
-        swap_flex = flex_swap_sku_menu(order_id, old_code, qty)
-        send_reply_response(event["replyToken"], swap_flex)
-
+        send_reply_response(event["replyToken"], flex_swap_sku_menu(int(parts[1]), parts[2], int(parts[3])))
     elif action == "edit_swap_do" and len(parts) == 5:
-        order_id = int(parts[1])
-        old_code = parts[2]
-        new_code = parts[3]
-        qty = int(parts[4])
+        order_id, old_code, new_code, qty = int(parts[1]), parts[2], parts[3], int(parts[4])
         ord_rec = get_order_by_id(order_id)
         if ord_rec:
             existing_new_qty = num(ord_rec.get(new_code, 0))
-            update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
+            update_order_db(order_id, {old_code: 0, new_code: existing_new_qty + qty})
         reply_after_action()
-
     elif action == "edit_qty_menu" and len(parts) == 3:
-        order_id = int(parts[1])
-        code = parts[2]
-        qty_flex = flex_qty_menu(order_id, code)
-        send_reply_response(event["replyToken"], qty_flex)
-
+        send_reply_response(event["replyToken"], flex_qty_menu(int(parts[1]), parts[2]))
     elif action == "edit_qty_set" and len(parts) == 4:
-        order_id = int(parts[1])
-        code = parts[2]
-        new_qty = int(parts[3])
-        update_db("orders", order_id, {code: new_qty})
+        update_order_db(int(parts[1]), {parts[2]: int(parts[3])})
         reply_after_action()
-
     elif action == "edit_add_menu" and len(parts) == 2:
-        order_id = int(parts[1])
-        add_flex = flex_add_item_menu(order_id)
-        send_reply_response(event["replyToken"], add_flex)
-
+        send_reply_response(event["replyToken"], flex_add_item_menu(int(parts[1])))
     elif action == "select" and len(parts) == 5:
-        resolved_dt = parts[1]
-        shop_id = int(parts[2])
-        code = parts[3]
-        qty = int(parts[4])
-        print(f"DEBUG [select action]: date={resolved_dt}, shop_id={shop_id}, code={code}, qty={qty}")
-
-        _, current_orders, _ = fetch_fresh_data()
+        resolved_dt, shop_id, code, qty = parts[1], int(parts[2]), parts[3], int(parts[4])
+        _, current_orders = fetch_fresh_data()
         existing_order = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
         if existing_order:
             oid = existing_order["id"]
             current_qty = num(existing_order.get(code, 0))
-            update_db("orders", oid, {code: current_qty + qty})
+            update_order_db(oid, {code: current_qty + qty})
         else:
             payload = {"shop_id": shop_id, "ddate": resolved_dt, "status": "pending", code: qty}
-            add("orders", payload)
-
+            add_order_db(payload)
         reply_after_action()
     else:
         print(f"⚠️ Unhandled postback action: {action}")
