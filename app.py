@@ -124,7 +124,6 @@ def load():
 
         DATA["shops"] = shops_res.data or []
         
-        # จัดการแปลงค่าที่เป็นตัวเลขสินค้าให้เป็น int
         orders = []
         for r in (orders_res.data or []):
             for k in INT_COLS & set(r.keys()):
@@ -147,10 +146,9 @@ INT_COLS = {"id", "shop_id", *CODES}
 
 
 def add(tab, d):
-    # ลบ key ชั่วคราวออกก่อนบันทึก
     payload = {k: v for k, v in d.items() if k != "_row"}
     if "id" in payload:
-        payload.pop("id") # ให้ Supabase gen id ให้อัตโนมัติ
+        payload.pop("id")
         
     res = supabase.table(tab).insert(payload).execute()
     if res.data:
@@ -210,77 +208,8 @@ def dmy(iso):
     return f"{int(d):02d}/{int(m):02d}/{y}"
 
 
-def parse_date_input(text_str):
-    m = re.search(r"(\d{1,2})(?:/(\d{1,2}))?(?:/(\d{2,4}))?", text_str)
-    if m:
-        day = int(m.group(1))
-        month = int(m.group(2)) if m.group(2) else today().month
-        yr = int(m.group(3)) if m.group(3) else today().year
-        if yr < 100:
-            yr += 2000
-        try:
-            return date(yr, month, day).isoformat()
-        except ValueError:
-            return None
-    return None
-
-
 def codes_text(o):
     return " ".join(f"{c}{o[c]}" for c in CODES if o.get(c, 0))
-
-
-def total_text(rows):
-    t = {c: sum(r.get(c, 0) for r in rows) for c in CODES}
-    total_qty = sum(t.values())
-    details = codes_text(t)
-    return f"{total_qty} ชิ้น ({details})" if details else "0 ชิ้น"
-
-
-def status_line(rows):
-    return "  ".join(
-        f"{e} {sum(1 for r in rows if r['status'] == k)}" for k, (e, _) in STATUSES.items()
-    )
-
-
-def resolve(day, month=None):
-    t = today()
-    try:
-        if month:
-            d = date(t.year, month, day)
-            return d if d >= t else date(t.year + 1, month, day)
-        if day >= t.day:
-            return date(t.year, t.month, day)
-        y, m = (t.year + 1, 1) if t.month == 12 else (t.year, t.month + 1)
-        return date(y, m, day)
-    except ValueError:
-        return None
-
-
-def upcoming_dates():
-    return sorted({o["ddate"] for o in DATA["orders"] if o.get("ddate")}, reverse=False)
-
-
-def candidates(name):
-    n = norm(name)
-    out = []
-    for s in DATA["shops"]:
-        names = [norm(s["name"])] + [a for a in s["aliases"].split("|") if a]
-        best = max(SequenceMatcher(None, n, x).ratio() for x in names)
-        out.append((best, s))
-    out.sort(key=lambda t: -t[0])
-    return out
-
-
-def get_or_create_shop(name):
-    dn = display_name(name)
-    s = next((s for s in DATA["shops"] if s["name"] == dn), None)
-    if s:
-        return s["id"]
-    cands = candidates(name)
-    if cands and cands[0][0] >= AUTO_MATCH:
-        return cands[0][1]["id"]
-    new_shop = add("shops", {"name": dn, "aliases": ""})
-    return new_shop["id"]
 
 
 def get_session(user_id):
@@ -394,13 +323,6 @@ def flex_items_in_category(cat, user_id):
                     "height": "sm",
                     "flex": 2,
                     "action": {"type": "postback", "label": "+1", "data": f"add|{code}|1|{cat}"}
-                },
-                {
-                    "type": "button",
-                    "style": "secondary",
-                    "height": "sm",
-                    "flex": 3,
-                    "action": {"type": "postback", "label": "ใส่จำนวน", "data": f"ask_qty|{code}|{cat}"}
                 }
             ]
         })
@@ -415,13 +337,6 @@ def flex_items_in_category(cat, user_id):
                 "style": "secondary",
                 "height": "sm",
                 "action": {"type": "postback", "label": "⬅️ กลับหน้าหมวด", "data": "menu"}
-            },
-            {
-                "type": "button",
-                "style": "primary",
-                "color": "#06C755",
-                "height": "sm",
-                "action": {"type": "postback", "label": "✅ ตะกร้าสินค้า", "data": "menu"}
             }
         ]
     }
@@ -438,58 +353,96 @@ def flex_items_in_category(cat, user_id):
     }
 
 
-def flex_order_actions(order_id):
-    o = order_by_id(order_id)
-    if not o:
-        return text("ไม่พบออเดอร์นี้")
+# ---------- LINE WEBHOOK ROUTE & HANDLERS ----------
 
-    status_buttons = []
-    for k, (emo, label) in STATUSES.items():
-        status_buttons.append({
-            "type": "button",
-            "style": "primary" if o["status"] == k else "secondary",
-            "height": "sm",
-            "action": {"type": "postback", "label": f"{emo} {label}", "data": f"set_status|{order_id}|{k}"}
-        })
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+    
+    try:
+        if SECRET:
+            hash = hmac.new(SECRET.encode('utf-8'), body.encode('utf-8'), hashlib.sha256).digest()
+            computed_signature = base64.b64encode(hash).decode('utf-8')
+            if computed_signature != signature:
+                abort(400)
+    except Exception as e:
+        print(f"❌ Signature Verification Error: {e}")
+        abort(400)
 
-    return {
-        "type": "flex",
-        "altText": f"จัดการออเดอร์ #{order_id}",
-        "contents": {
-            "type": "bubble",
-            "body": {
-                "type": "box",
-                "layout": "vertical",
-                "spacing": "sm",
-                "contents": [
-                    {"type": "text", "text": f"จัดการออเดอร์ #{order_id}", "weight": "bold", "size": "md"},
-                    {"type": "text", "text": f"{o['name']} ({dmy(o['ddate'])})", "size": "sm", "color": "#555555"},
-                    {"type": "text", "text": f"รายการ: {codes_text(o)}", "size": "xs", "color": "#666666", "wrap": True},
-                    {"type": "separator", "margin": "md"},
-                    {"type": "text", "text": "เปลี่ยนสถานะ (เฉพาะร้านนี้):", "size": "xs", "weight": "bold", "color": "#888888"},
-                    *status_buttons,
-                    {"type": "separator", "margin": "md"},
-                    {
-                        "type": "box",
-                        "layout": "horizontal",
-                        "spacing": "sm",
-                        "contents": [
-                            {
-                                "type": "button",
-                                "style": "secondary",
-                                "height": "sm",
-                                "action": {"type": "postback", "label": "✏️ แก้ไข", "data": f"edit_order|{order_id}"}
-                            },
-                            {
-                                "type": "button",
-                                "style": "secondary",
-                                "color": "#FF3B30",
-                                "height": "sm",
-                                "action": {"type": "postback", "label": "🗑️ ลบ", "data": f"del_order|{order_id}"}
-                            }
-                        ]
-                    }
-                ]
-            }
-        }
+    try:
+        json_data = json.loads(body)
+        for event in json_data.get("events", []):
+            event_type = event.get("type")
+            if event_type == "message":
+                handle_message(event)
+            elif event_type == "postback":
+                handle_postback(event)
+    except Exception as e:
+        print(f"❌ Parse Event Error: {e}")
+        traceback.print_exc()
+
+    return "OK", 200
+
+
+def handle_message(event):
+    user_id = event["source"]["userId"]
+    msg_text = event["message"].get("text", "").strip()
+    
+    if msg_text == "เมนู" or msg_text.startswith("สั่ง"):
+        reply_flex(event["replyToken"], flex_category_menu(user_id))
+    else:
+        reply_text(event["replyToken"], f"พิมพ์ 'เมนู' หรือ 'สั่งสินค้า' เพื่อเริ่มใช้งานครับ")
+
+
+def handle_postback(event):
+    user_id = event["source"]["userId"]
+    data = event["postback"]["data"]
+    parts = data.split("|")
+    action = parts[0]
+    
+    if action == "cat":
+        cat = parts[1]
+        reply_flex(event["replyToken"], flex_items_in_category(cat, user_id))
+    elif action == "menu":
+        reply_flex(event["replyToken"], flex_category_menu(user_id))
+    elif action == "clear_cart":
+        sess = get_session(user_id)
+        sess["items"] = {}
+        reply_flex(event["replyToken"], flex_category_menu(user_id))
+    elif action == "add":
+        code = parts[1]
+        val = int(parts[2])
+        cat = parts[3]
+        sess = get_session(user_id)
+        sess["items"][code] = sess["items"].get(code, 0) + val
+        reply_flex(event["replyToken"], flex_items_in_category(cat, user_id))
+
+
+def reply_text(reply_token, text_message):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TOKEN}"
     }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [{"type": "text", "text": text_message}]
+    }
+    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+
+
+def reply_flex(reply_token, flex_message):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {TOKEN}"
+    }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [flex_message]
+    }
+    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+
+
+if __name__ == "__main__":
+    load()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
