@@ -41,14 +41,20 @@ PRODUCTS_DB = {
     "sojg": "Soju องุ่น", "sojf": "Soju เกรปฟรุ๊ต", "sojs": "Soju สตรอเบอรี่"
 }
 
+GROUP_KEYWORDS = {
+    "galaxy": ["galf", "galr"], "กาแล็กซี": ["galf", "galr"], "กาแลaxy": ["galf", "galr"],
+    "soju": ["sojy", "sojp", "sojg", "sojf", "sojs"], "โซจู": ["sojy", "sojp", "sojg", "sojf", "sojs"],
+    "tendo": ["tend3", "tend7"], "เท็นโด": ["tend3", "tend7"],
+}
+
 ALIAS_MAP = {
     "lager": "l", "larner": "l", "rose": "r", "dunkel": "d",
     "mug": "m", "pine": "p", "jug": "j", "tower": "t",
     "h40": "h40l", "h40lo": "h40l", "ceili": "h40l",
     "counter": "sct", "table": "st",
     "astand": "ast", "standee": "std",
-    "galaxyแบน": "galf", "galf": "galf",
-    "galaxyกลม": "galr", "galr": "galr", "galaxy": "galr", "กาแล็กซี": "galr", "กาแลaxy": "galr",
+    "galaxyแบน": "galf", "กาแล็กซีแบน": "galf", "galf": "galf",
+    "galaxyกลม": "galr", "กาแล็กซีกลม": "galr", "galr": "galr",
     "tendo360": "tend3", "tend3": "tend3",
     "tendo700": "tend7", "tend7": "tend7",
     "kacha": "kach", "kach": "kach",
@@ -134,6 +140,9 @@ def dmy(iso):
     except: return iso
 
 
+def today(): return datetime.now(TZ).date()
+
+
 def resolve_date(day_val, month_val=None, year_val=None):
     t = today()
     try:
@@ -157,32 +166,57 @@ def get_or_create_shop(name):
     return new_shop["id"]
 
 
-def today(): return datetime.now(TZ).date()
+def get_fallback_shop_id(resolved_dt):
+    day_orders = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
+    if day_orders: return day_orders[-1]["shop_id"]
+    if DATA["orders"]: return DATA["orders"][-1]["shop_id"]
+    return get_or_create_shop("ร้านทั่วไป")
+
+
+def normalize_tokens(raw_tokens):
+    merged = []
+    i = 0
+    while i < len(raw_tokens):
+        curr = raw_tokens[i].strip()
+        if i + 1 < len(raw_tokens) and re.fullmatch(r"\d+", raw_tokens[i + 1].strip()) and re.search(r"[a-zA-Zเ-์]", curr) and not re.search(r"\d+$", curr):
+            merged.append(f"{curr}{raw_tokens[i + 1].strip()}")
+            i += 2
+        else:
+            merged.append(curr)
+            i += 1
+    return merged
 
 
 def match_product_token(token):
-    clean_token = token.lower()
+    clean_token = token.lower().strip()
     
-    # รองรับกรณีพิมพ์ชื่อกลุ่มกว้างๆ แบบติดกันหรือเว้นวรรค เช่น galaxy3, soju2
-    m_group = re.match(r"^(galaxy|กาแล็กซี|กาแลaxy|soju|โซจู)\s*(\d*)$", clean_token)
+    # Check direct exact alias first (e.g. galaxyแบน, galaxyกลม, etc.)
+    if clean_token in ALIAS_MAP:
+        code = ALIAS_MAP[clean_token]
+        return ("exact", code, 1, None)
+
+    m_group = re.match(r"^([a-zเ-์]+)\s*(\d*)$", clean_token)
     if m_group:
         g_name = m_group.group(1)
         qty_str = m_group.group(2)
         qty = int(qty_str) if qty_str else 1
-        if g_name in ["galaxy", "กาแล็กซี", "กาแลaxy"]:
-            return ("ambiguous", ["galf", "galr"], qty, g_name)
-        elif g_name in ["soju", "โซจู"]:
-            return ("ambiguous", ["sojy", "sojp", "sojg", "sojf", "sojs"], qty, g_name)
+        
+        if g_name in ALIAS_MAP:
+            return ("exact", ALIAS_MAP[g_name], qty, None)
+            
+        if g_name in GROUP_KEYWORDS:
+            return ("ambiguous", GROUP_KEYWORDS[g_name], qty, g_name)
 
-    m = re.match(r"^([a-zเ-์]+)\s*(\d+)$", clean_token)
+    m = re.match(r"^([a-zเ-์0-9]+?)\s*(\d+)$", clean_token)
     if m:
         name_part = m.group(1)
         qty = int(m.group(2))
         
-        if name_part in ["galaxy", "กาแล็กซี", "กาแลaxy"]:
-            return ("ambiguous", ["galf", "galr"], qty, name_part)
-        if name_part in ["soju", "โซจู"]:
-            return ("ambiguous", ["sojy", "sojp", "sojg", "sojf", "sojs"], qty, name_part)
+        if name_part in ALIAS_MAP:
+            return ("exact", ALIAS_MAP[name_part], qty, None)
+            
+        if name_part in GROUP_KEYWORDS:
+            return ("ambiguous", GROUP_KEYWORDS[name_part], qty, name_part)
 
         alias_code = ALIAS_MAP.get(name_part)
         if alias_code and alias_code in CODES:
@@ -192,7 +226,7 @@ def match_product_token(token):
             
         matching_codes = set()
         for c, full_name in PRODUCTS_DB.items():
-            if name_part == c or name_part in full_name.lower():
+            if name_part == c or name_part in full_name.lower().replace(" ", ""):
                 matching_codes.add(c)
         
         if len(matching_codes) == 1:
@@ -200,14 +234,19 @@ def match_product_token(token):
         elif len(matching_codes) > 1:
             return ("ambiguous", list(matching_codes), qty, name_part)
             
-        matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.6)
+        matches = get_close_matches(name_part, VALID_SEARCH_KWORDS, n=1, cutoff=0.65)
         if matches:
             matched_str = matches[0]
-            matched_code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str][0] if matched_str in [v.lower() for v in PRODUCTS_DB.values()] else None)
+            matched_code = ALIAS_MAP.get(matched_str, [k for k,v in PRODUCTS_DB.items() if v.lower() == matched_str.lower()][0] if matched_str.lower() in [v.lower() for v in PRODUCTS_DB.values()] else None)
             if matched_code and matched_code in CODES:
                 return ("exact", matched_code, qty, None)
                 
     return ("none", None, 0, None)
+
+
+def is_product_like_token(token):
+    m_type, _, _, _ = match_product_token(token)
+    return m_type in ("exact", "ambiguous")
 
 
 def build_day_bubble(target_date_str, orders_list):
@@ -291,7 +330,7 @@ def build_day_bubble(target_date_str, orders_list):
                             "layout": "horizontal",
                             "spacing": "xs",
                             "contents": [
-                                {"type": "button", "style": "secondary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขจำนวน", "data": f"edit_menu|{order_id}"}},
+                                {"type": "button", "style": "secondary", "color": "#1399FF", "height": "sm", "action": {"type": "postback", "label": "✏️ แก้ไขรายการ", "data": f"edit_menu|{order_id}"}},
                                 {"type": "button", "style": "secondary", "color": "#DD3333", "height": "sm", "action": {"type": "postback", "label": "🗑️ ลบออเดอร์", "data": f"delete|{order_id}"}}
                             ]
                         }
@@ -320,10 +359,13 @@ def build_day_bubble(target_date_str, orders_list):
 
 
 def flex_carousel_summary(days_data, extra_bubble=None):
-    bubbles = [build_day_bubble(d_str, o_list) for d_str, o_list in days_data.items() if len(o_list) > 0]
+    bubbles = []
     if extra_bubble:
         bubbles.append(extra_bubble)
-        
+    for d_str, o_list in days_data.items():
+        if len(o_list) > 0:
+            bubbles.append(build_day_bubble(d_str, o_list))
+            
     if not bubbles:
         bubbles.append({
             "type": "bubble",
@@ -347,26 +389,24 @@ def flex_selection_menu(target_date_str, shop_id, qty, matching_codes, orig_quer
             "height": "sm",
             "action": {
                 "type": "postback",
-                "label": f"เลือก: {p_name} ({qty})",
+                "label": f"{p_name} ({qty})",
                 "data": f"select|{target_date_str}|{shop_id}|{c}|{qty}"
             }
         })
 
-    bubble = {
+    return {
         "type": "bubble",
         "size": "kilo",
         "body": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": "🔍 พบสินค้าใกล้เคียงหลายรายการ", "weight": "bold", "color": "#FF9900", "size": "sm"},
-                {"type": "text", "text": f"คุณพิมพ์คำว่า '{orig_query}{qty}' สำหรับ {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
-                {"type": "text", "text": "กรุณาเลือกประเภทสินค้าที่ต้องการครับ:", "size": "sm", "weight": "bold", "margin": "md", "wrap": True},
+                {"type": "text", "text": "🔍 เลือกรายการสินค้า (SKU)", "weight": "bold", "color": "#FF9900", "size": "md"},
+                {"type": "text", "text": f"คำสั่ง '{orig_query} {qty}' • {shop_name}", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
                 {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
             ]
         }
     }
-    return bubble
 
 
 def flex_edit_menu(order_id):
@@ -377,39 +417,156 @@ def flex_edit_menu(order_id):
     sh = shop_by_id(ord_rec["shop_id"])
     sh_name = sh["name"] if sh else "ร้านค้า"
     
-    buttons = []
+    item_sections = []
     for code in CODES:
         qty = ord_rec.get(code, 0)
         if qty > 0:
             p_name = PRODUCTS_DB.get(code, code)
-            buttons.append({
-                "type": "button",
-                "style": "secondary",
-                "height": "sm",
-                "action": {
-                    "type": "postback",
-                    "label": f"ลบ/รีเซ็ต: {p_name} (มี {qty})",
-                    "data": f"edit_clear|{order_id}|{code}"
-                }
+            item_sections.append({
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "xs",
+                "margin": "md",
+                "contents": [
+                    {"type": "text", "text": f"• {p_name} (จำนวน {qty})", "weight": "bold", "size": "sm", "color": "#111111"},
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "spacing": "xs",
+                        "contents": [
+                            {
+                                "type": "button", "style": "secondary", "height": "sm",
+                                "action": {"type": "postback", "label": "🔄 เปลี่ยนสินค้า", "data": f"edit_swap_menu|{order_id}|{code}|{qty}"}
+                            },
+                            {
+                                "type": "button", "style": "secondary", "height": "sm",
+                                "action": {"type": "postback", "label": "🔢 ปรับจำนวน", "data": f"edit_qty_menu|{order_id}|{code}"}
+                            }
+                        ]
+                    }
+                ]
             })
             
-    if not buttons:
-        buttons.append({"type": "text", "text": "ไม่มีสินค้าในออเดอร์นี้", "size": "sm", "color": "#888888"})
+    if not item_sections:
+        item_sections.append({"type": "text", "text": "ไม่มีสินค้าในออเดอร์นี้", "size": "sm", "color": "#888888", "margin": "md"})
+        
+    item_sections.append({"type": "separator", "margin": "md"})
+    item_sections.append({
+        "type": "button", "style": "primary", "color": "#1399FF", "height": "sm", "margin": "md",
+        "action": {"type": "postback", "label": "➕ เพิ่มสินค้าอื่นในออเดอร์", "data": f"edit_add_menu|{order_id}"}
+    })
 
-    bubble = {
+    return {
         "type": "bubble",
         "size": "kilo",
         "body": {
             "type": "box",
             "layout": "vertical",
             "contents": [
-                {"type": "text", "text": f"✏️ แก้ไขออเดอร์: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "sm"},
-                {"type": "text", "text": "เลือกสินค้าที่ต้องการเคลียร์จำนวนออกเป็น 0:", "size": "xs", "color": "#555555", "margin": "sm", "wrap": True},
-                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons}
+                {"type": "text", "text": f"✏️ แก้ไข: {sh_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
+                {"type": "text", "text": f"รหัสออเดอร์ #{order_id}", "size": "xs", "color": "#666666", "wrap": True},
+                *item_sections
             ]
         }
     }
-    return bubble
+
+
+def flex_swap_sku_menu(order_id, old_code, qty):
+    old_name = PRODUCTS_DB.get(old_code, old_code)
+    buttons = []
+    for code, p_name in PRODUCTS_DB.items():
+        if code == old_code: continue
+        buttons.append({
+            "type": "button", "style": "secondary", "height": "sm",
+            "action": {"type": "postback", "label": f"{p_name}", "data": f"edit_swap_do|{order_id}|{old_code}|{code}|{qty}"}
+        })
+
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "🔄 เลือกสินค้าใหม่แทนที่", "weight": "bold", "color": "#1399FF", "size": "md"},
+                {"type": "text", "text": f"เปลี่ยนจาก: {old_name} ({qty})", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:11]}
+            ]
+        }
+    }
+
+
+def flex_qty_menu(order_id, code):
+    ord_rec = next((o for o in DATA["orders"] if o.get("id") == order_id), None)
+    curr_qty = ord_rec.get(code, 0) if ord_rec else 0
+    p_name = PRODUCTS_DB.get(code, code)
+    
+    dec_qty = max(0, curr_qty - 1)
+    inc_qty = curr_qty + 1
+
+    preset_rows = [
+        [
+            {"label": f"➖ ลด (-1) → {dec_qty}", "val": dec_qty},
+            {"label": f"➕ เพิ่ม (+1) → {inc_qty}", "val": inc_qty},
+        ],
+        [
+            {"label": "ตั้งเป็น 1", "val": 1},
+            {"label": "ตั้งเป็น 2", "val": 2},
+            {"label": "ตั้งเป็น 3", "val": 3},
+        ],
+        [
+            {"label": "ตั้งเป็น 5", "val": 5},
+            {"label": "ตั้งเป็น 10", "val": 10},
+            {"label": "🗑️ ลบ (0)", "val": 0},
+        ],
+    ]
+
+    rows_box = []
+    for row in preset_rows:
+        btns = []
+        for item in row:
+            btns.append({
+                "type": "button", "style": "secondary", "height": "sm",
+                "action": {"type": "postback", "label": item["label"], "data": f"edit_qty_set|{order_id}|{code}|{item['val']}"}
+            })
+        rows_box.append({"type": "box", "layout": "horizontal", "spacing": "xs", "contents": btns})
+
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": f"🔢 ปรับจำนวน: {p_name}", "weight": "bold", "color": "#1399FF", "size": "md"},
+                {"type": "text", "text": f"จำนวนปัจจุบัน: {curr_qty}", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": rows_box}
+            ]
+        }
+    }
+
+
+def flex_add_item_menu(order_id):
+    buttons = []
+    for code, p_name in PRODUCTS_DB.items():
+        buttons.append({
+            "type": "button", "style": "secondary", "height": "sm",
+            "action": {"type": "postback", "label": f"+ {p_name} (1)", "data": f"edit_qty_set|{order_id}|{code}|1"}
+        })
+
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "➕ เพิ่มสินค้าในออเดอร์", "weight": "bold", "color": "#1399FF", "size": "md"},
+                {"type": "text", "text": "เลือกสินค้า (เพิ่มทีละ 1 จากนั้นกดปรับจำนวนได้)", "size": "xs", "color": "#555555", "margin": "xs", "wrap": True},
+                {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "md", "contents": buttons[:11]}
+            ]
+        }
+    }
 
 
 @app.route("/callback", methods=["POST"])
@@ -418,8 +575,8 @@ def callback():
     body = request.get_data(as_text=True)
     try:
         if SECRET:
-            h = hmac.new(SECRET.encode('utf-8'), body.encode('utf-8'), hashlib.sha256).digest()
-            if base64.b64encode(h).decode('utf-8') != signature: abort(400)
+            h = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+            if base64.b64encode(h).decode("utf-8") != signature: abort(400)
     except: abort(400)
 
     try:
@@ -453,6 +610,19 @@ def handle_message(event):
         reply_text(event["replyToken"], "พิมพ์: [วันที่] [ชื่อร้าน] [รายการสินค้าและจำนวน]\nเช่น: 17 ร้าน ABC Galaxyแบน 2\n\nพิมพ์ 'ขอรายการสินค้า' เพื่อดูรหัสสินค้าทั้งหมด")
         return
 
+    m_edit = re.match(r"^(?:แก้|แก้ไข)\s+(\d+)\s+([a-zA-Zเ-์0-9]+)\s+(\d+)$", msg_text)
+    if m_edit:
+        oid = int(m_edit.group(1))
+        raw_sku = m_edit.group(2).lower()
+        new_qty = int(m_edit.group(3))
+        ord_rec = next((o for o in DATA["orders"] if o.get("id") == oid), None)
+        if ord_rec:
+            target_code = raw_sku if raw_sku in CODES else ALIAS_MAP.get(raw_sku)
+            if target_code and target_code in CODES:
+                update_db("orders", oid, {target_code: new_qty})
+                reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+                return
+
     if msg_text.startswith("สรุป"):
         parts = msg_text.split()
         days_data = {}
@@ -471,30 +641,33 @@ def handle_message(event):
         return
 
     parts = msg_text.split()
-    if len(parts) >= 3:
+    if len(parts) >= 2:
         date_match = re.match(r"^(\d{1,2})(?:/(\d{1,2}))?$", parts[0])
         if date_match:
             resolved_dt = resolve_date(int(date_match.group(1)), int(date_match.group(2)) if date_match.group(2) else None)
             if resolved_dt:
-                shop_name = parts[1]
-                tokens = parts[2:]
+                merged_after_date = normalize_tokens(parts[1:])
+                if is_product_like_token(merged_after_date[0]):
+                    shop_id = get_fallback_shop_id(resolved_dt)
+                    tokens = merged_after_date
+                else:
+                    shop_name = parts[1]
+                    shop_id = get_or_create_shop(shop_name)
+                    tokens = normalize_tokens(parts[2:])
                 
                 status_key = "pending"
                 if tokens and tokens[-1].lower() in STATUS_MAP:
                     status_key = STATUS_MAP[tokens[-1].lower()]
                     tokens.pop()
                 
-                shop_id = get_or_create_shop(shop_name)
                 order_items = {}
-                
                 for token in tokens:
                     m_type, code_or_list, qty, orig_query = match_product_token(token)
                     if m_type == "exact":
                         order_items[code_or_list] = order_items.get(code_or_list, 0) + qty
                     elif m_type == "ambiguous":
                         sel_bubble = flex_selection_menu(resolved_dt, shop_id, qty, code_or_list, orig_query)
-                        matched = [o for o in DATA["orders"] if o.get("ddate") == resolved_dt]
-                        reply_flex(event["replyToken"], flex_carousel_summary({resolved_dt: matched}, extra_bubble=sel_bubble))
+                        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=sel_bubble))
                         return
 
                 if order_items:
@@ -521,19 +694,53 @@ def handle_postback(event):
         order_id = int(parts[2])
         update_db("orders", order_id, {"status": parts[1]})
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        
     elif action == "delete" and len(parts) == 2:
         order_id = int(parts[1])
         delete_db("orders", order_id)
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        
     elif action == "edit_menu" and len(parts) == 2:
         order_id = int(parts[1])
         edit_bubble = flex_edit_menu(order_id)
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=edit_bubble))
-    elif action == "edit_clear" and len(parts) == 3:
+        
+    elif action == "edit_swap_menu" and len(parts) == 4:
+        order_id = int(parts[1])
+        old_code = parts[2]
+        qty = int(parts[3])
+        swap_bubble = flex_swap_sku_menu(order_id, old_code, qty)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=swap_bubble))
+        
+    elif action == "edit_swap_do" and len(parts) == 5:
+        order_id = int(parts[1])
+        old_code = parts[2]
+        new_code = parts[3]
+        qty = int(parts[4])
+        ord_rec = next((o for o in DATA["orders"] if o.get("id") == order_id), None)
+        if ord_rec:
+            existing_new_qty = ord_rec.get(new_code, 0)
+            update_db("orders", order_id, {old_code: 0, new_code: existing_new_qty + qty})
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        
+    elif action == "edit_qty_menu" and len(parts) == 3:
         order_id = int(parts[1])
         code = parts[2]
-        update_db("orders", order_id, {code: 0})
+        qty_bubble = flex_qty_menu(order_id, code)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=qty_bubble))
+        
+    elif action == "edit_qty_set" and len(parts) == 4:
+        order_id = int(parts[1])
+        code = parts[2]
+        new_qty = int(parts[3])
+        update_db("orders", order_id, {code: new_qty})
         reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data()))
+        
+    elif action == "edit_add_menu" and len(parts) == 2:
+        order_id = int(parts[1])
+        add_bubble = flex_add_item_menu(order_id)
+        reply_flex(event["replyToken"], flex_carousel_summary(get_all_valid_days_data(), extra_bubble=add_bubble))
+        
     elif action == "select" and len(parts) == 5:
         resolved_dt = parts[1]
         shop_id = int(parts[2])
@@ -553,11 +760,19 @@ def handle_postback(event):
 
 
 def reply_text(rt, text):
-    requests.post("https://api.line.me/v2/bot/message/reply", headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}, json={"replyToken": rt, "messages": [{"type": "text", "text": text}]})
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        json={"replyToken": rt, "messages": [{"type": "text", "text": text}]}
+    )
 
 
 def reply_flex(rt, flex):
-    requests.post("https://api.line.me/v2/bot/message/reply", headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}, json={"replyToken": rt, "messages": [flex]})
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+        json={"replyToken": rt, "messages": [flex]}
+    )
 
 
 if __name__ == "__main__":
