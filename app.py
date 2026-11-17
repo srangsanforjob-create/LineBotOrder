@@ -482,11 +482,13 @@ def send_reply_response(rt, res_obj):
     else:
         messages = [res_obj]
 
+    print(f"DEBUG [send_reply_response]: Sending {len(messages)} message(s) with token {rt[:10]}...")
     res = requests.post(
         "https://api.line.me/v2/bot/message/reply",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
         json={"replyToken": rt, "messages": messages}
     )
+    print(f"DEBUG [send_reply_response]: Status code = {res.status_code}, Response = {res.text}")
     if res.status_code != 200:
         print(f"❌ LINE Reply Error ({res.status_code}): {res.text}")
 
@@ -764,7 +766,7 @@ def get_all_valid_days_data():
 
 def get_specific_day_data(date_str):
     _, orders, _ = fetch_fresh_data()
-    day_orders = [o for o in orders if o.get("ddate") == date_str]
+    day_orders = [o for o in orders if o.get("ddate"] == date_str] # type: ignore
     if day_orders:
         return {date_str: day_orders}
     return {}
@@ -865,10 +867,12 @@ def handle_message(event):
 
 def handle_postback(event):
     data_str = event["postback"].get("data", "")
+    print(f"DEBUG [handle_postback]: Received postback data: {data_str}")
     parts = data_str.split("|")
     action = parts[0]
 
     def reply_after_action():
+        print(f"DEBUG [reply_after_action]: Generating summary after action '{action}'")
         res_obj = flex_carousel_summary(get_all_valid_days_data())
         send_reply_response(event["replyToken"], res_obj)
 
@@ -947,6 +951,7 @@ def handle_postback(event):
         shop_id = int(parts[2])
         code = parts[3]
         qty = int(parts[4])
+        print(f"DEBUG [select action]: date={resolved_dt}, shop_id={shop_id}, code={code}, qty={qty}")
 
         _, current_orders, _ = fetch_fresh_data()
         existing_order = next((o for o in current_orders if str(o["shop_id"]) == str(shop_id) and o.get("ddate") == resolved_dt), None)
@@ -959,6 +964,8 @@ def handle_postback(event):
             add("orders", payload)
 
         reply_after_action()
+    else:
+        print(f"⚠️ Unhandled postback action: {action}")
 
 
 if __name__ == "__main__":
