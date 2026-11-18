@@ -283,7 +283,7 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้าในบรรทัดเดียวกัน (ประมวลผลทั้งหมดก่อน แล้วแสดงผลรวมทุกวัน) ──
+    # ── ระบบรับ Order รองรับหลายสินค้าและบันทึกครบถ้วน (แก้ปัญหา Order ตกหล่นและสเตตัสไม่ตรง) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
@@ -294,8 +294,8 @@ def handle_message(event):
     error_order_date = ""
     error_shop_name = ""
     error_qty = 1
+    error_status = "pending"
 
-    # รอบที่ 1: ตรวจสอบและเก็บรายการที่ถูกต้องทั้งหมดไว้ล่วงหน้า
     for line in lines:
         line_str = line.strip()
         if not line_str:
@@ -312,10 +312,35 @@ def handle_message(event):
                 order_date = raw_date
                 
             remainder_tokens = parts[2:]
+            
+            # 📌 ดึงค่า Status ที่ผู้ใช้พิมพ์ไว้ท้ายบรรทัดให้อย่างแม่นยำ
+            line_status = "pending"
+            joined_rem = " ".join(remainder_tokens).lower()
+            if "อัพสลิปแล้ว" in joined_rem or "อัพสลิป" in joined_rem:
+                line_status = "อัพสลิปแล้ว"
+                if remainder_tokens and remainder_tokens[-1].lower() in ["แล้ว", "อัพสลิป", "อัพสลิปแล้ว"]:
+                    remainder_tokens = remainder_tokens[:-1]
+                    if remainder_tokens and remainder_tokens[-1].lower() in ["อัพ", "อัพสลิป"]:
+                        remainder_tokens = remainder_tokens[:-1]
+            elif "order แล้ว" in joined_rem:
+                line_status = "Order แล้ว"
+                if len(remainder_tokens) >= 2:
+                    remainder_tokens = remainder_tokens[:-2]
+            elif remainder_tokens and remainder_tokens[-1].lower() == "order":
+                line_status = "Order แล้ว"
+                remainder_tokens = remainder_tokens[:-1]
+            elif remainder_tokens and remainder_tokens[-1].lower() in ["pending", "credit", "overdue", "วงเงินเต็ม"]:
+                stat_token = remainder_tokens[-1].lower()
+                if stat_token == "pending": line_status = "pending"
+                elif stat_token == "credit": line_status = "credit"
+                elif stat_token == "overdue": line_status = "overdue"
+                elif stat_token == "วงเงินเต็ม": line_status = "วงเงินเต็ม"
+                remainder_tokens = remainder_tokens[:-1]
+
             i = 0
             while i < len(remainder_tokens):
                 token = remainder_tokens[i]
-                if token.lower() in ["pending", "order", "credit", "overdue", "วงเงินเต็ม", "อัพสลิปแล้ว"]:
+                if token.lower() in ["pending", "order", "credit", "overdue", "วงเงินเต็ม", "อัพสลิปแล้ว", "แล้ว"]:
                     i += 1
                     continue
                 
@@ -344,7 +369,9 @@ def handle_message(event):
                     error_order_date = order_date
                     error_shop_name = shop_name
                     error_qty = qty
-                    break
+                    error_status = line_status
+                    i += 1
+                    continue  # 📌 ไม่ใช้ break แล้ว เพื่อให้อ่านและบันทึกรายการอื่นๆ ทั้งก่อนและหลังจนครบ
                 
                 product_name = product_info["name"]
                 category = product_info["category"]
@@ -358,20 +385,18 @@ def handle_message(event):
                     "product_name": product_name,
                     "category": category,
                     "qty": qty,
-                    "status": "pending",
+                    "status": line_status,
                     "is_support": is_support
                 })
                 i += 1
-        if has_error:
-            break
 
-    # รอบที่ 2: บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที (ไม่ว่าจะอยู่ก่อนหรือหลังจุดผิด)
+    # 📌 บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที (ทั้งก่อนและหลังจุดที่พิมพ์ผิดจะไม่ถูกตัดทิ้ง)
     for record in parsed_orders:
         res = supabase.table("orders").insert(record).execute()
         if res.data:
             success_records.append(res.data[0])
 
-    # หากเจอตัวที่พิมพ์ผิด ให้บันทึกตัวที่ถูกไปก่อน แล้วเด้งปุ่มเลือก SKU ที่ถูกต้องให้ผู้ใช้กด
+    # 📌 หากพบรหัสสินค้าผิด ให้แจ้งเตือนปุ่มเลือกแก้เฉพาะตัวที่ผิด แต่ Order อื่นๆ ถูกบันทึกเก็บไว้เรียบร้อยแล้ว
     if has_error:
         matches = difflib.get_close_matches(error_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
         if matches:
@@ -380,7 +405,7 @@ def handle_message(event):
                 buttons.append(ButtonComponent(
                     style='primary',
                     margin='sm',
-                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{error_order_date}_{error_shop_name}_{m}_{error_qty}")
+                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{error_order_date}_{error_shop_name}_{m}_{error_qty}_{error_status}")
                 ))
             flex_msg = FlexSendMessage(
                 alt_text="เลือกสินค้าที่ถูกต้อง",
@@ -388,8 +413,8 @@ def handle_message(event):
                     body=BoxComponent(
                         layout='vertical',
                         contents=[
-                            TextComponent(text=f"⚠️ ไม่พบรหัสสินค้า '{error_sku}'", weight='bold', size='md', color='#FF5555'),
-                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียงด้านล่าง:", size='xs', color='#666666', margin='sm'),
+                            TextComponent(text=f"⚠️ บันทึกรายการที่ถูกต้องแล้ว แต่ไม่พบรหัส '{error_sku}'", weight='bold', size='sm', color='#FF5555'),
+                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียงสำหรับรายการที่ผิดพลาด:", size='xs', color='#666666', margin='sm'),
                             SeparatorComponent(margin='md')
                         ] + buttons
                     )
@@ -398,10 +423,10 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, flex_msg)
             return
         else:
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{error_sku}' กรุณาตรวจสอบรหัสในคู่มือ"))
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัสสินค้า '{error_sku}' กรุณาตรวจสอบรหัสในคู่มือ"))
             return
 
-    # หากไม่มีข้อผิดพลาด บันทึกเสร็จแล้วแสดงสรุปยอดทุกวันทั้งหมดทันที
+    # 📌 หากไม่มีข้อผิดพลาด บันทึกเสร็จแล้วแสดงสรุปยอดทุกวันทั้งหมดทันที
     if success_records:
         flex_msg = generate_all_days_summary_flex()
         if flex_msg:
@@ -419,6 +444,7 @@ def handle_action_command(event, text):
         shop_name = parts[2]
         sku = parts[3]
         qty = int(parts[4])
+        item_status = parts[5] if len(parts) > 5 else "pending"
         prod_info = PRODUCT_MAP.get(sku)
         
         record = {
@@ -428,7 +454,7 @@ def handle_action_command(event, text):
             "product_name": prod_info["name"],
             "category": prod_info["category"],
             "qty": qty,
-            "status": "pending",
+            "status": item_status,
             "is_support": False
         }
         supabase.table("orders").insert(record).execute()
