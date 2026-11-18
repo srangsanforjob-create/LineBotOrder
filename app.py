@@ -96,6 +96,20 @@ PRODUCT_MAP = {
     "PTYC": {"name": "PATTAYA/PHUKET 490ml", "category": "Bottle/Cans"}
 }
 
+def get_status_color(status):
+    """ฟังก์ชันกำหนดสีของสเตตัสบน Flex Message"""
+    s = status.lower()
+    if "pending" in s:
+        return "#ff8c00"  # สีส้ม
+    elif "order" in s:
+        return "#1DB446"  # สีเขียว LINE
+    elif "credit" in s:
+        return "#3b82f6"  # สีฟ้า
+    elif "overdue" in s or "เต็ม" in s:
+        return "#FF5555"  # สีแดง
+    else:
+        return "#888888"  # สีเทาค่าเริ่มต้น
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -529,8 +543,9 @@ def handle_action_command(event, text):
         target_date = curr_res.data[0]["order_date"]
         shop_name = curr_res.data[0]["shop_name"]
 
-        if new_status == "อัพสลิปแล้ว":
-            supabase.table("orders").delete().eq("id", record_id).execute()
+        # 📌 ข้อ 1: ถ้าเปลี่ยนสเตตัสเป็นอัพสลิปแล้ว (หรืออัพสลิป) ให้ลบออเดอร์ของร้านนี้ทันที
+        if new_status in ["อัพสลิปแล้ว", "อัพสลิป"]:
+            supabase.table("orders").delete().eq("order_date", target_date).eq("shop_name", shop_name).execute()
         else:
             supabase.table("orders").update({"status": new_status}).eq("order_date", target_date).eq("shop_name", shop_name).execute()
             
@@ -549,7 +564,11 @@ def handle_action_command(event, text):
             updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
             flex_msg = generate_summary_carousel(target_date, updated_orders)
             line_bot_api.reply_message(event.reply_token, flex_msg)
-        elif sub_action in ["uploaded", "delete"]:
+        elif sub_action == "uploaded":
+            # 📌 ข้อ 1 (Bulk): หากกดอัพสลิปทั้งหมด ให้ลบออเดอร์ทั้งหมดในวันนั้นทันที
+            supabase.table("orders").delete().eq("order_date", target_date).execute()
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปสลิปและลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
+        elif sub_action == "delete":
             supabase.table("orders").delete().eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
 
@@ -575,13 +594,14 @@ def generate_single_day_bubble(order_date, orders):
     for shop_name, shop_items in shops_dict.items():
         shop_status = shop_items[0]['status'] if shop_items else 'pending'
         first_item_id = shop_items[0]['id'] if shop_items else ''
+        status_color = get_status_color(shop_status) # 📌 ข้อ 2: เลือกสีป้าย Status ตามสถานะ
         
         shop_contents = [
             BoxComponent(
                 layout='horizontal',
                 contents=[
                     TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
-                    TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
+                    TextComponent(text=f"[{shop_status}]", size='xs', color=status_color, align='center', flex=2, weight='bold'),
                     ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
                 ]
             ),
@@ -694,6 +714,7 @@ def generate_status_summary_carousel(status_name, orders):
         for (shop_name, order_date), shop_items in chunk:
             shop_status = shop_items[0]['status'] if shop_items else status_name
             first_item_id = shop_items[0]['id'] if shop_items else ''
+            status_color = get_status_color(shop_status) # 📌 ข้อ 2: เลือกสีป้าย Status ตามสถานะ
             
             shop_contents = [
                 BoxComponent(
@@ -705,7 +726,7 @@ def generate_status_summary_carousel(status_name, orders):
                             layout='horizontal',
                             contents=[
                                 TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
-                                TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
+                                TextComponent(text=f"[{shop_status}]", size='xs', color=status_color, align='center', flex=2, weight='bold'),
                                 ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
                             ]
                         )
