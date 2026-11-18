@@ -1,4 +1,5 @@
 import os
+import difflib
 from datetime import datetime
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
@@ -24,7 +25,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping (6 หมวดหมู่ พร้อมหมวดและชื่อเต็ม)
+# 📌 Master Product Mapping (6 หมวดหมู่สมบูรณ์ พร้อมคำค้นหาที่ยืดหยุ่น)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -108,25 +109,31 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
     
-    # 3. จัดการคู่มือการใช้งาน (Manual)
-    if text.lower() in ["คู่มือ", "help", "วิธีใช้งาน"]:
+    # 3. จัดการคู่มือการใช้งาน (Manual Categories)
+    if text.lower() in ["คู่มือ", "help"]:
         guide_msg = (
             "📖 **คู่มือการใช้งาน LINE Bot**\n\n"
-            "1️⃣ **วิธีการ Order:** พิมพ์ `[วันที่] [ชื่อร้าน] [รหัสสินค้า] [จำนวน] [สเตตัส]`\n"
-            "   • หากระบุแต่วัน จะนับเป็นเดือนปัจจุบัน\n"
-            "   • สามารถพิมพ์หลายบรรทัดเพื่อสั่งหลายออเดอร์พร้อมกันได้\n"
-            "2️⃣ **สินค้า Support:** พิมพ์ `sup` นำหน้ารหัสสินค้า\n"
-            "3️⃣ **ดูสรุปภาพรวม:** พิมพ์ `สรุป` หรือ `สรุป DD/MM/YYYY`"
+            "• พิมพ์ `คู่มือ order` : วิธีการสั่งซื้อสินค้า\n"
+            "• พิมพ์ `คู่มือ สรุป` : วิธีการดูสรุป Order\n"
+            "• พิมพ์ `คู่มือ สินค้า` : รายการและรหัสสินค้าทั้งหมด"
         )
         line_bot_api.reply_message(event.reply_token, TextMessage(text=guide_msg))
         return
+    elif text.lower() == "คู่มือ order":
+        line_bot_api.reply_message(event.reply_token, TextMessage(text="📝 **วิธีการ Order:**\nพิมพ์ `[วันที่] [ชื่อร้าน] [รหัสสินค้า] [จำนวน] [สเตตัส]`\n(เช่น `18 GUZA L 1 pending`)\n- หากระบุแต่วัน (เช่น 18) จะนับเป็นเดือนปัจจุบัน\n- สามารถพิมพ์หลายบรรทัดเพื่อสั่งหลายออเดอร์พร้อมกันได้\n- พิมพ์ `sup` หรือ `SUP` นำหน้ารหัสเพื่อทำเป็นสินค้า Support"))
+        return
+    elif text.lower() == "คู่มือ สรุป":
+        line_bot_api.reply_message(event.reply_token, TextMessage(text="📊 **วิธีการดูสรุป Order:**\n- พิมพ์ `สรุป` เพื่อดูยอดของวันนี้\n- พิมพ์ `สรุป [YYYY-MM-DD]` เพื่อดูยอดเฉพาะวันที่ต้องการ"))
+        return
+    elif text.lower() == "คู่มือ สินค้า":
+        line_bot_api.reply_message(event.reply_token, TextMessage(text="🏷️ **หมวดหมู่สินค้า:**\n1. Draft Beer: L, R, D\n2. Amenity: M, J, T, CO2\n3. Install: H40L, H90, H120, Celli, SCT, Table\n4. POSM: AST, LEDA2V, LEDA3V, ACLA5, MHD ฯลฯ\n5. OtherALC: GALF, GALR, TEND3, SOJY ฯลฯ\n6. Bottle/Cans: LB, DB, LC, WC, IPAC ฯลฯ"))
+        return
 
-    # 2.2 จัดการคำสั่งสรุป
+    # 2.2 จัดการคำสั่งสรุป (สรุป / สรุป [วันที่])
     if text.startswith("สรุป"):
         parts = text.split()
         target_date = parts[1] if len(parts) > 1 else datetime.now().strftime("%Y-%m-%d")
         
-        # ดึงข้อมูลจาก Supabase ตามวันที่
         res = supabase.table("orders").select("*").eq("order_date", target_date).execute()
         orders = res.data
         
@@ -138,15 +145,14 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 2.3.1 & 2.5 จัดการปุ่มกด Action (Bulk หรือ Action แยกรายการ)
-    if text.startswith("action_"):
+    # จัดการปุ่ม Action ต่างๆ (สถานะ, Bulk, แก้ไข)
+    if text.startswith("action_") or text.startswith("edit_"):
         handle_action_command(event, text)
         return
 
-    # 1. จัดการการ Order สินค้า (รองรับหลายบรรทัด)
+    # 1. จัดการการ Order สินค้า (รองรับหลายบรรทัดและความยืดหยุ่น)
     lines = text.split('\n')
     success_records = []
-    
     current_year_month = datetime.now().strftime("%Y-%m")
     
     for line in lines:
@@ -156,20 +162,26 @@ def handle_message(event):
             shop_name = parts[1]
             sku_input = parts[2].upper()
             
-            # ตรวจสอบว่าใส่ Date แบบไหน (วันอย่างเดียว หรือ วันเดือนปี)
+            # แปลงวันที่ ถ้าระบุแค่วัน ให้ใช้เดือนปัจจุบัน
             if len(raw_date) <= 2:
                 order_date = f"{current_year_month}-{raw_date.zfill(2)}"
             else:
                 order_date = raw_date
                 
-            # ตรวจสอบ Support Item ('sup' หรือ 'SUP')
+            # ตรวจสอบ Support Item ('sup' / 'SUP')
             is_support = sku_input.startswith("SUP")
-            clean_sku = sku_input.replace("SUP", "") if is_support else sku_input
+            clean_sku = sku_input.replace("SUP", "", 1) if is_support else sku_input
             
-            # ตรวจสอบ Product Mapping
+            # ตรวจสอบรหัสสินค้า (Product Mapping & Fuzzy Matching)
             product_info = PRODUCT_MAP.get(clean_sku)
             if not product_info:
-                line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}' กรุณาตรวจสอบรหัสในคู่มือ"))
+                # ทำ Fuzzy Matching หาตัวที่ใกล้เคียงที่สุด
+                matches = difflib.get_close_matches(clean_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
+                if matches:
+                    options_text = ", ".join([f"'{m}' ({PRODUCT_MAP[m]['name']})" for m in matches])
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}'\nคุณหมายถึงสินค้าเหล่านี้หรือไม่:\n{options_text}"))
+                else:
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}' กรุณาตรวจสอบรหัสในคู่มือ"))
                 return
                 
             product_name = product_info["name"]
@@ -177,11 +189,11 @@ def handle_message(event):
             if is_support:
                 product_name = f"support({product_name})"
 
-            # ดึง จำนวน (qty) และ Status (Default เป็น pending หากไม่ใส่)
+            # ดึง จำนวน (qty) และ Status (Default เป็น pending)
             qty = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1
             status = parts[4] if len(parts) > 4 else "pending"
 
-            # บันทึกลง Supabase Table 'orders'
+            # บันทึกลง Supabase Table 'orders' ตรงตามโครงสร้างเดิม
             record = {
                 "order_date": order_date,
                 "shop_name": shop_name,
@@ -208,6 +220,26 @@ def handle_action_command(event, text):
     parts = text.split("_")
     action_type = parts[1]
     
+    # 2.3.1 ปุ่มแก้ไข: เลือกว่าจะแก้ไขจำนวนหรือแก้ไขสินค้า
+    if text.startswith("edit_"):
+        record_id = text.split("_")[1]
+        flex_msg = FlexSendMessage(
+            alt_text="เลือกวิธีแก้ไข",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="⚙️ เลือกรายการที่ต้องการแก้ไข", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        ButtonComponent(style='primary', action=MessageAction(label='แก้ไขจำนวน', text=f"action_editqty_{record_id}")),
+                        ButtonComponent(style='secondary', action=MessageAction(label='แก้ไขสินค้า', text=f"action_editprod_{record_id}"))
+                    ]
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
     if action_type == "status":
         record_id = parts[2]
         new_status = parts[3]
@@ -222,9 +254,7 @@ def handle_action_command(event, text):
         target_date = parts[3]
         if sub_action == "ordered":
             supabase.table("orders").update({"status": "Order แล้ว"}).eq("order_date", target_date).execute()
-        elif sub_action == "uploaded":
-            supabase.table("orders").delete().eq("order_date", target_date).execute()
-        elif sub_action == "delete":
+        elif sub_action in ["uploaded", "delete"]:
             supabase.table("orders").delete().eq("order_date", target_date).execute()
         line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ ดำเนินการคำสั่งกลุ่มเรียบร้อย"))
 
@@ -241,6 +271,7 @@ def generate_summary_carousel(order_date, orders):
     for idx, chunk in enumerate(item_chunks):
         is_last = (idx == len(item_chunks) - 1)
         
+        # Requirement 2.4: ด้านบนเขียน วัน เดือน ปี ชัดเจน
         contents = [
             BoxComponent(
                 layout='vertical',
@@ -263,7 +294,7 @@ def generate_summary_carousel(order_date, orders):
                     ]
                 )
             )
-            # 5 ปุ่มสเตตัส + ปุ่มแก้ไข/ลบ
+            # 5 ปุ่มสเตตัสครบถ้วน + ปุ่มแก้ไข/ลบ
             contents.append(BoxComponent(
                 layout='horizontal', spacing='xs', margin='sm',
                 contents=[
@@ -300,6 +331,7 @@ def generate_summary_carousel(order_date, orders):
             contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
             contents.append(SeparatorComponent(margin='md'))
             
+            # Requirement 2.5: 3 ปุ่ม Apply ทุก Order ในวัน
             contents.append(BoxComponent(
                 layout='vertical', spacing='sm',
                 contents=[
@@ -309,6 +341,7 @@ def generate_summary_carousel(order_date, orders):
                 ]
             ))
 
+        # แสดงหมายเลขหน้า Carousel (เช่น 1/2)
         contents.append(TextComponent(text=f"หน้าที่ {idx+1}/{len(item_chunks)}", size='xxs', color='#aaaaaa', align='center', margin='md'))
         bubbles.append(BubbleContainer(body=BoxComponent(layout='vertical', contents=contents)))
 
