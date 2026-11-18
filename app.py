@@ -278,11 +278,19 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้าในบรรทัดเดียวกัน ──
+    # ── ระบบรับ Order รองรับหลายสินค้าในบรรทัดเดียวกัน (แก้ไขปัญหา Bulk Input) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
     
+    # 📌 รอบที่ 1: ตรวจสอบความถูกต้องและเตรียมข้อมูลทั้งหมดก่อนบันทึก
+    parsed_orders = []
+    has_error = False
+    error_sku = ""
+    error_order_date = ""
+    error_shop_name = ""
+    error_qty = 1
+
     for line in lines:
         line_str = line.strip()
         if not line_str:
@@ -326,40 +334,19 @@ def handle_message(event):
                 
                 product_info = PRODUCT_MAP.get(clean_sku)
                 if not product_info:
-                    matches = difflib.get_close_matches(clean_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
-                    if matches:
-                        buttons = []
-                        for m in matches:
-                            buttons.append(ButtonComponent(
-                                style='primary',
-                                margin='sm',
-                                action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{order_date}_{shop_name}_{m}_{qty}")
-                            ))
-                        flex_msg = FlexSendMessage(
-                            alt_text="เลือกสินค้าที่ถูกต้อง",
-                            contents=BubbleContainer(
-                                body=BoxComponent(
-                                    layout='vertical',
-                                    contents=[
-                                        TextComponent(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_raw}'", weight='bold', size='md', color='#FF5555'),
-                                        TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียงด้านล่าง:", size='xs', color='#666666', margin='sm'),
-                                        SeparatorComponent(margin='md')
-                                    ] + buttons
-                                )
-                            )
-                        )
-                        line_bot_api.reply_message(event.reply_token, flex_msg)
-                        return
-                    else:
-                        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_raw}' กรุณาตรวจสอบรหัสในคู่มือ"))
-                        return
-                    
+                    has_error = True
+                    error_sku = sku_raw
+                    error_order_date = order_date
+                    error_shop_name = shop_name
+                    error_qty = qty
+                    break
+                
                 product_name = product_info["name"]
                 category = product_info["category"]
                 if is_support:
                     product_name = f"support({product_name})"
 
-                record = {
+                parsed_orders.append({
                     "order_date": order_date,
                     "shop_name": shop_name,
                     "product_code": clean_sku,
@@ -368,11 +355,46 @@ def handle_message(event):
                     "qty": qty,
                     "status": "pending",
                     "is_support": is_support
-                }
-                res = supabase.table("orders").insert(record).execute()
-                if res.data:
-                    success_records.append(res.data[0])
+                })
                 i += 1
+        if has_error:
+            break
+
+    # 📌 หากพบรหัสสินค้าผิดพลาด ให้แสดงตัวเลือกใกล้เคียงทันทีโดยไม่ทำลายกระบวนการอื่น
+    if has_error:
+        matches = difflib.get_close_matches(error_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
+        if matches:
+            buttons = []
+            for m in matches:
+                buttons.append(ButtonComponent(
+                    style='primary',
+                    margin='sm',
+                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{error_order_date}_{error_shop_name}_{m}_{error_qty}")
+                ))
+            flex_msg = FlexSendMessage(
+                alt_text="เลือกสินค้าที่ถูกต้อง",
+                contents=BubbleContainer(
+                    body=BoxComponent(
+                        layout='vertical',
+                        contents=[
+                            TextComponent(text=f"⚠️ ไม่พบรหัสสินค้า '{error_sku}'", weight='bold', size='md', color='#FF5555'),
+                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียงด้านล่าง:", size='xs', color='#666666', margin='sm'),
+                            SeparatorComponent(margin='md')
+                        ] + buttons
+                    )
+                )
+            )
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+            return
+        else:
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{error_sku}' กรุณาตรวจสอบรหัสในคู่มือ"))
+            return
+
+    # 📌 รอบที่ 2: บันทึกรายการที่ถูกต้องทั้งหมดลง Database
+    for record in parsed_orders:
+        res = supabase.table("orders").insert(record).execute()
+        if res.data:
+            success_records.append(res.data[0])
 
     if success_records:
         target_date = success_records[0]["order_date"]
@@ -543,7 +565,6 @@ def handle_action_command(event, text):
         target_date = curr_res.data[0]["order_date"]
         shop_name = curr_res.data[0]["shop_name"]
 
-        # 📌 ข้อ 1: ถ้าเปลี่ยนสเตตัสเป็นอัพสลิปแล้ว (หรืออัพสลิป) ให้ลบออเดอร์ของร้านนี้ทันที
         if new_status in ["อัพสลิปแล้ว", "อัพสลิป"]:
             supabase.table("orders").delete().eq("order_date", target_date).eq("shop_name", shop_name).execute()
         else:
@@ -565,7 +586,6 @@ def handle_action_command(event, text):
             flex_msg = generate_summary_carousel(target_date, updated_orders)
             line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action == "uploaded":
-            # 📌 ข้อ 1 (Bulk): หากกดอัพสลิปทั้งหมด ให้ลบออเดอร์ทั้งหมดในวันนั้นทันที
             supabase.table("orders").delete().eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปสลิปและลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
         elif sub_action == "delete":
@@ -594,7 +614,7 @@ def generate_single_day_bubble(order_date, orders):
     for shop_name, shop_items in shops_dict.items():
         shop_status = shop_items[0]['status'] if shop_items else 'pending'
         first_item_id = shop_items[0]['id'] if shop_items else ''
-        status_color = get_status_color(shop_status) # 📌 ข้อ 2: เลือกสีป้าย Status ตามสถานะ
+        status_color = get_status_color(shop_status)
         
         shop_contents = [
             BoxComponent(
@@ -714,7 +734,7 @@ def generate_status_summary_carousel(status_name, orders):
         for (shop_name, order_date), shop_items in chunk:
             shop_status = shop_items[0]['status'] if shop_items else status_name
             first_item_id = shop_items[0]['id'] if shop_items else ''
-            status_color = get_status_color(shop_status) # 📌 ข้อ 2: เลือกสีป้าย Status ตามสถานะ
+            status_color = get_status_color(shop_status)
             
             shop_contents = [
                 BoxComponent(
