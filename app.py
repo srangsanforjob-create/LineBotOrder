@@ -209,7 +209,6 @@ def handle_message(event):
         parts = text.split()
         if len(parts) > 1:
             param = parts[1]
-            # ตรวจสอบว่าเป็นรูปแบบวันที่ (YYYY-MM-DD) หรือไม่
             is_date = re.match(r'^\d{4}-\d{2}-\d{2}$', param)
             
             if is_date:
@@ -223,7 +222,6 @@ def handle_message(event):
                 line_bot_api.reply_message(event.reply_token, flex_msg)
                 return
             else:
-                # กรณีระบุเป็น Status เช่น "สรุป pending", "สรุป credit"
                 status_query = " ".join(parts[1:])
                 res = supabase.table("orders").select("*").ilike("status", f"%{status_query}%").execute()
                 orders = res.data
@@ -234,14 +232,12 @@ def handle_message(event):
                 line_bot_api.reply_message(event.reply_token, flex_msg)
                 return
         else:
-            # กรณีพิมพ์แค่ "สรุป" -> ดึงทุกวันที่มียอดออเดอร์มาแสดงแบบ Carousel แยกตามวัน
             res = supabase.table("orders").select("*").execute()
             orders = res.data
             if not orders:
                 line_bot_api.reply_message(event.reply_token, TextMessage(text="📭 ไม่พบข้อมูลออเดอร์ใดๆ ในระบบ"))
                 return
             
-            # จัดกลุ่มออเดอร์ตาม order_date
             dates_dict = {}
             for item in orders:
                 d = item['order_date']
@@ -666,10 +662,8 @@ def generate_summary_carousel(order_date, orders):
     return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=bubble)
 
 def generate_status_summary_carousel(status_name, orders):
-    # จัดกลุ่มตามสถานะ โดยในแต่ละร้านจะแสดงวันที่กำกับไว้
     total_qty = sum(item["qty"] for item in orders)
     
-    # จัดกลุ่มตามร้านค้า แต่ละร้านเก็บรายการสินค้าและวันที่
     shops_dict = {}
     for item in orders:
         key = (item['shop_name'], item['order_date'])
