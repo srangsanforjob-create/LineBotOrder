@@ -830,7 +830,7 @@ def generate_status_summary_carousel(status_name, orders, source_id):
         shops_dict[key].append(item)
     
     shops_list = list(shops_dict.items())
-    chunk_size = 3
+    chunk_size = 5  # 📌 กำหนดให้แสดง 5 ร้านค้าต่อ 1 Bubble หน้า
     shop_chunks = [shops_list[i:i + chunk_size] for i in range(0, len(shops_list), chunk_size)]
     if not shop_chunks:
         shop_chunks = [[]]
