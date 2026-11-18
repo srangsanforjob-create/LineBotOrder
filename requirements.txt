@@ -4,3 +4,4 @@ supabase
 python-dotenv
 fuzzywuzzy
 python-Levenshtein
+gunicorn
