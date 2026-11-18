@@ -223,8 +223,8 @@ def parse_order_text(raw_text):
                 first_item_idx = i
                 break
 
+        # ถ้าบรรทัดนี้ไม่มีสินค้าที่รู้จักเลย ให้ข้ามเงียบๆ (ไม่ถือว่าเป็น Error จุกจิก เพื่อรองรับข้อความทั่วไป เช่น Test)
         if first_item_idx == -1:
-            global_errors.append(f"ไม่พบรายการสินค้า หรือรหัสสินค้าไม่สมบูรณ์ในบรรทัด: {line}")
             continue
 
         shop_name = " ".join(tokens[:first_item_idx]).strip() if first_item_idx > 0 else "ร้านค้าทั่วไป"
@@ -241,7 +241,6 @@ def parse_order_text(raw_text):
                 i += 1
                 continue
 
-            # ตรวจสอบรูปแบบ sup ติดกับตัวเลข เช่น supl1 หรือ sup-l1
             m_sup_attached = re.match(r"^(sup[a-z0-9\-]+)(-?\d*)$", clean_tok)
             if m_sup_attached and m_sup_attached.group(1):
                 p_part = m_sup_attached.group(1)
@@ -288,8 +287,6 @@ def parse_order_text(raw_text):
                     qty = safe_int(item_tokens[i + 1])
                     i += 1
                 items[code] = items.get(code, 0) + qty
-            else:
-                global_errors.append(f"ไม่รู้จักสินค้าหรือพิมพ์ไม่เต็ม: {tok}")
             i += 1
 
         if items:
@@ -523,7 +520,7 @@ def process_webhook_event(event):
 
         if not parsed_list:
             if errors:
-                send_reply(reply_token, [{"type": "text", "text": "⚠️ รูปแบบไม่ถูกต้อง:\n" + "\n".join(errors)}])
+                send_reply(reply_token, [{"type": "text", "text": "⚠️ กรุณาระบุข้อมูลให้ถูกต้อง:\n" + "\n".join(errors)}])
             return
 
         inserted_count = 0
@@ -538,7 +535,6 @@ def process_webhook_event(event):
                     "status": entry["status"]
                 }
                 
-                # กรองส่งเฉพาะคอลัมน์มาตรฐาน (CODES) ไปยัง Supabase เพื่อไม่ให้เกิด Error PGRST204
                 for k, v in entry["items"].items():
                     if k in CODES:
                         payload[k] = v
