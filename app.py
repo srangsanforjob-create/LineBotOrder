@@ -26,7 +26,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบทุกรสชาติ)
+# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -72,7 +72,7 @@ PRODUCT_MAP = {
     "A6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
     "MHD": {"name": "ตัวหนีบเมนู / Menu Holder", "category": "posm"},
     
-    # OtherALC (รวม Soju ครบทุกรสชาติ)
+    # OtherALC (รวม Soju ครบทั้ง 5 รสชาติ)
     "GALF": {"name": "Galaxy แบน 350ml", "category": "OtherALC"},
     "GALR": {"name": "Galaxy กลม 700ml", "category": "OtherALC"},
     "TEND3": {"name": "Tendo 360ml", "category": "OtherALC"},
@@ -194,7 +194,7 @@ def handle_message(event):
                 contents=[
                     TextComponent(text="🏷️ คู่มือสินค้า (3/3) - OtherALC & Bottle", weight='bold', size='sm', color='#1DB446'),
                     SeparatorComponent(margin='md'),
-                    TextComponent(text="• OtherALC (เครื่องดื่ม/Soju):\n  GALF/GALR (Galaxy) | TEND3/TEND7 (Tendo) | KACH (Kacha)\n  SOJY (โยเกิร์ต) | SOJP (พีช) | SOJG (องุ่น) | SOJF (เกรปฟรุ๊ต) | SOJS (สตรอเบอรี่)\n• Bottle/Cans Beer:\n  LB/DB (Bottle) | LC/DC/WC/RC/IPAC/PTYB/PTYC (Cans)", wrap=True, size='xs', color='#333333'),
+                    TextComponent(text="• OtherALC (เครื่องดื่ม/Soju 5 รส):\n  GALF/GALR (Galaxy) | TEND3/TEND7 (Tendo) | KACH (Kacha)\n  SOJY (โยเกิร์ต) | SOJP (พีช) | SOJG (องุ่น) | SOJF (เกรปฟรุ๊ต) | SOJS (สตรอเบอรี่)\n• Bottle/Cans Beer:\n  LB/DB (Bottle) | LC/DC/WC/RC/IPAC/PTYB/PTYC (Cans)", wrap=True, size='xs', color='#333333'),
                     SeparatorComponent(margin='md'),
                     ButtonComponent(style='secondary', action=MessageAction(label='⬅️ กลับหน้า 1', text='คู่มือ สินค้า 1'))
                 ]
@@ -221,7 +221,7 @@ def handle_message(event):
         return
 
     # ── ดักจับปุ่ม Action / แก้ไขต่างๆ ──
-    if text.startswith("action_") or text.startswith("edit_") or text.startswith("setqty_") or text.startswith("quickadd_"):
+    if text.startswith("action_") or text.startswith("edit_") or text.startswith("setqty_") or text.startswith("quickadd_") or text.startswith("editshop_"):
         handle_action_command(event, text)
         return
 
@@ -354,6 +354,39 @@ def handle_action_command(event, text):
         line_bot_api.reply_message(event.reply_token, generate_summary_carousel(order_date, all_orders))
         return
 
+    # 📌 เมื่อกดปุ่ม [✏️จัดการ] ข้างชื่อร้าน
+    if parts[0] == "editshop":
+        shop_name = parts[1]
+        order_date = parts[2]
+        
+        items_res = supabase.table("orders").select("*").eq("order_date", order_date).eq("shop_name", shop_name).execute()
+        shop_items = items_res.data
+        
+        buttons = []
+        for it in shop_items:
+            buttons.append(ButtonComponent(
+                style='secondary',
+                margin='sm',
+                action=MessageAction(label=f"แก้ {it['product_code']} ({it['qty']} ชิ้น)", text=f"edit_{it['id']}")
+            ))
+        
+        flex_msg = FlexSendMessage(
+            alt_text="จัดการออเดอร์ร้าน",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text=f"⚙️ จัดการร้าน: {shop_name}", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        TextComponent(text="เลือกรายการสินค้าที่ต้องการแก้ไข:", size='xs', color='#666666'),
+                        SeparatorComponent(margin='sm')
+                    ] + buttons
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
     if text.startswith("edit_"):
         record_id = parts[1]
         flex_msg = FlexSendMessage(
@@ -402,7 +435,7 @@ def handle_action_command(event, text):
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🧊 Amenity / CO2', text=f"action_pickcat_{record_id}_amenity")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🛠️ Install', text=f"action_pickcat_{record_id}_install")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='📋 POSM', text=f"action_pickcat_{record_id}_posm")),
-                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍾 OtherALC (รวม Soju)', text=f"action_pickcat_{record_id}_OtherALC")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍾 OtherALC (รวม Soju 5 รส)', text=f"action_pickcat_{record_id}_OtherALC")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍻 Bottle/Cans Beer', text=f"action_pickcat_{record_id}_Bottle/Cans"))
                     ]
                 )
@@ -419,12 +452,13 @@ def handle_action_command(event, text):
             if info["category"] == cat_key:
                 prod_buttons.append(ButtonComponent(style='link', action=MessageAction(label=f"{sku}: {info['name']}", text=f"action_setprod_{record_id}_{sku}")))
         
+        # 📌 แสดงผลปุ่มเลือกสินค้าทั้งหมดแบบไม่ตัดทอน (รองรับโซจูครบ 5 รสชาติ)
         flex_msg = FlexSendMessage(
             alt_text="เลือกสินค้า",
             contents=BubbleContainer(
                 body=BoxComponent(
                     layout='vertical',
-                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons[:12]
+                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons
                 )
             )
         )
@@ -451,15 +485,16 @@ def handle_action_command(event, text):
         record_id = parts[2]
         new_status = parts[3]
         
-        curr_res = supabase.table("orders").select("order_date").eq("id", record_id).execute()
+        curr_res = supabase.table("orders").select("order_date", "shop_name").eq("id", record_id).execute()
         if not curr_res.data:
             return
         target_date = curr_res.data[0]["order_date"]
+        shop_name = curr_res.data[0]["shop_name"]
 
         if new_status == "อัพสลิปแล้ว":
             supabase.table("orders").delete().eq("id", record_id).execute()
         else:
-            supabase.table("orders").update({"status": new_status}).eq("id", record_id).execute()
+            supabase.table("orders").update({"status": new_status}).eq("order_date", target_date).eq("shop_name", shop_name).execute()
             
         updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
         if updated_orders:
@@ -482,7 +517,6 @@ def handle_action_command(event, text):
 
 def generate_summary_carousel(order_date, orders):
     bubbles = []
-    total_items = len(orders)
     total_qty = sum(item["qty"] for item in orders)
     
     # จัดกลุ่มสินค้าตามชื่อร้านค้า (Group by shop_name)
@@ -516,61 +550,61 @@ def generate_summary_carousel(order_date, orders):
         
         for shop_name, shop_items in chunk:
             shop_status = shop_items[0]['status'] if shop_items else 'pending'
+            first_item_id = shop_items[0]['id'] if shop_items else ''
             
-            # 📌 รวมร้านและรายการสินค้าทั้งหมดให้อยู่ใน Box เดียวกันอย่างแท้จริง
+            # 📌 ส่วนหัวข้อร้าน + สถานะ + ปุ่ม [✏️จัดการ] อยู่บรรทัดเดียวกัน
             shop_contents = [
                 BoxComponent(
                     layout='horizontal',
                     contents=[
-                        TextComponent(text=f"🛒 ร้าน: {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
-                        TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='end', flex=2, weight='bold')
+                        TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
+                        TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
+                        ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
                     ]
                 ),
                 SeparatorComponent(margin='xs')
             ]
             
-            # วนลูปเพิ่มรายการสินค้าแต่ละตัวต่อลงไปใน Box ของร้านเดียวกัน
+            # 📌 รายการสินค้าในร้าน (เรียงต่อกันเป็น List)
             for item in shop_items:
                 shop_contents.append(
                     BoxComponent(
-                        layout='vertical',
-                        margin='sm',
-                        spacing='xs',
+                        layout='horizontal',
+                        margin='xs',
                         contents=[
-                            BoxComponent(
-                                layout='horizontal',
-                                contents=[
-                                    TextComponent(text=f"• {item['product_code']} ({item['product_name']})", size='xs', color='#333333', flex=4, wrap=True),
-                                    TextComponent(text=f"{item['qty']} ชิ้น", size='xs', color='#666666', align='end', flex=2)
-                                ]
-                            ),
-                            BoxComponent(
-                                layout='horizontal', spacing='xs', margin='xs',
-                                contents=[
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='pending', text=f"action_status_{item['id']}_pending")),
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='Orderแล้ว', text=f"action_status_{item['id']}_Order แล้ว")),
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='อัพสลิป', text=f"action_status_{item['id']}_อัพสลิปแล้ว"))
-                                ]
-                            ),
-                            BoxComponent(
-                                layout='horizontal', spacing='xs', margin='xs',
-                                contents=[
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='credit', text=f"action_status_{item['id']}_credit")),
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='overdue', text=f"action_status_{item['id']}_overdue")),
-                                    ButtonComponent(style='secondary', height='sm', action=MessageAction(label='วงเงินเต็ม', text=f"action_status_{item['id']}_วงเงินเต็ม"))
-                                ]
-                            ),
-                            BoxComponent(
-                                layout='horizontal', spacing='xs', margin='xs',
-                                contents=[
-                                    ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️ แก้ไข', text=f"edit_{item['id']}"), flex=1),
-                                    ButtonComponent(style='link', height='sm', action=MessageAction(label='❌ ลบ', text=f"action_status_{item['id']}_อัพสลิปแล้ว"), flex=1)
-                                ]
-                            )
+                            TextComponent(text=f"• {item['product_code']} ({item['product_name']})", size='xs', color='#333333', flex=4, wrap=True),
+                            TextComponent(text=f"{item['qty']} ชิ้น", size='xs', color='#666666', align='end', flex=2)
                         ]
                     )
                 )
-                shop_contents.append(SeparatorComponent(margin='sm'))
+            
+            shop_contents.append(SeparatorComponent(margin='sm'))
+            
+            # 📌 ชุดปุ่มสถานะ 6 ปุ่ม (แสดงเพียงชุดเดียวต่อ 1 ร้าน)
+            shop_contents.append(
+                BoxComponent(
+                    layout='vertical',
+                    spacing='xs',
+                    contents=[
+                        BoxComponent(
+                            layout='horizontal', spacing='xs',
+                            contents=[
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='pending', text=f"action_status_{first_item_id}_pending")),
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='Orderแล้ว', text=f"action_status_{first_item_id}_Order แล้ว")),
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='อัพสลิป', text=f"action_status_{first_item_id}_อัพสลิปแล้ว"))
+                            ]
+                        ),
+                        BoxComponent(
+                            layout='horizontal', spacing='xs',
+                            contents=[
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='credit', text=f"action_status_{first_item_id}_credit")),
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='overdue', text=f"action_status_{first_item_id}_overdue")),
+                                ButtonComponent(style='secondary', height='sm', action=MessageAction(label='วงเงินเต็ม', text=f"action_status_{first_item_id}_วงเงินเต็ม"))
+                            ]
+                        )
+                    ]
+                )
+            )
 
             # นำ Box ของร้านนี้ไปใส่ในเนื้อหาหลักของ Bubble
             contents.append(
