@@ -110,6 +110,31 @@ def get_status_color(status):
     else:
         return "#888888"  # สีเทาค่าเริ่มต้น
 
+def generate_all_days_summary_flex():
+    """ฟังก์ชันสร้าง Flex Message สรุปยอดทุกวันที่มีออเดอร์ในระบบ"""
+    res = supabase.table("orders").select("*").execute()
+    orders = res.data
+    if not orders:
+        return None
+    
+    dates_dict = {}
+    for item in orders:
+        d = item['order_date']
+        if d not in dates_dict:
+            dates_dict[d] = []
+        dates_dict[d].append(item)
+    
+    sorted_dates = sorted(dates_dict.keys())
+    bubbles = []
+    for d in sorted_dates:
+        bubble_content = generate_single_day_bubble(d, dates_dict[d])
+        bubbles.append(bubble_content)
+    
+    if len(bubbles) > 1:
+        return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=CarouselContainer(contents=bubbles))
+    else:
+        return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=bubbles[0])
+
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -246,30 +271,10 @@ def handle_message(event):
                 line_bot_api.reply_message(event.reply_token, flex_msg)
                 return
         else:
-            res = supabase.table("orders").select("*").execute()
-            orders = res.data
-            if not orders:
+            flex_msg = generate_all_days_summary_flex()
+            if not flex_msg:
                 line_bot_api.reply_message(event.reply_token, TextMessage(text="📭 ไม่พบข้อมูลออเดอร์ใดๆ ในระบบ"))
                 return
-            
-            dates_dict = {}
-            for item in orders:
-                d = item['order_date']
-                if d not in dates_dict:
-                    dates_dict[d] = []
-                dates_dict[d].append(item)
-            
-            sorted_dates = sorted(dates_dict.keys())
-            bubbles = []
-            for d in sorted_dates:
-                bubble_content = generate_single_day_bubble(d, dates_dict[d])
-                bubbles.append(bubble_content)
-            
-            if len(bubbles) > 1:
-                flex_msg = FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมด', contents=CarouselContainer(contents=bubbles))
-            else:
-                flex_msg = FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมด', contents=bubbles[0])
-                
             line_bot_api.reply_message(event.reply_token, flex_msg)
             return
 
@@ -278,12 +283,11 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้าในบรรทัดเดียวกัน (แก้ไขปัญหา Bulk Input) ──
+    # ── ระบบรับ Order รองรับหลายสินค้าในบรรทัดเดียวกัน (ประมวลผลทั้งหมดก่อน แล้วแสดงผลรวมทุกวัน) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
     
-    # 📌 รอบที่ 1: ตรวจสอบความถูกต้องและเตรียมข้อมูลทั้งหมดก่อนบันทึก
     parsed_orders = []
     has_error = False
     error_sku = ""
@@ -291,6 +295,7 @@ def handle_message(event):
     error_shop_name = ""
     error_qty = 1
 
+    # รอบที่ 1: ตรวจสอบและเก็บรายการที่ถูกต้องทั้งหมดไว้ล่วงหน้า
     for line in lines:
         line_str = line.strip()
         if not line_str:
@@ -360,7 +365,13 @@ def handle_message(event):
         if has_error:
             break
 
-    # 📌 หากพบรหัสสินค้าผิดพลาด ให้แสดงตัวเลือกใกล้เคียงทันทีโดยไม่ทำลายกระบวนการอื่น
+    # รอบที่ 2: บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที (ไม่ว่าจะอยู่ก่อนหรือหลังจุดผิด)
+    for record in parsed_orders:
+        res = supabase.table("orders").insert(record).execute()
+        if res.data:
+            success_records.append(res.data[0])
+
+    # หากเจอตัวที่พิมพ์ผิด ให้บันทึกตัวที่ถูกไปก่อน แล้วเด้งปุ่มเลือก SKU ที่ถูกต้องให้ผู้ใช้กด
     if has_error:
         matches = difflib.get_close_matches(error_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
         if matches:
@@ -390,17 +401,13 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{error_sku}' กรุณาตรวจสอบรหัสในคู่มือ"))
             return
 
-    # 📌 รอบที่ 2: บันทึกรายการที่ถูกต้องทั้งหมดลง Database
-    for record in parsed_orders:
-        res = supabase.table("orders").insert(record).execute()
-        if res.data:
-            success_records.append(res.data[0])
-
+    # หากไม่มีข้อผิดพลาด บันทึกเสร็จแล้วแสดงสรุปยอดทุกวันทั้งหมดทันที
     if success_records:
-        target_date = success_records[0]["order_date"]
-        res = supabase.table("orders").select("*").eq("order_date", target_date).execute()
-        flex_msg = generate_summary_carousel(target_date, res.data)
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        flex_msg = generate_all_days_summary_flex()
+        if flex_msg:
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+        else:
+            line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ บันทึกออเดอร์เรียบร้อยแล้ว"))
     else:
         line_bot_api.reply_message(event.reply_token, TextMessage(text="⚠️ รูปแบบการสั่งซื้อไม่ถูกต้อง กรุณาพิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน"))
 
@@ -425,8 +432,11 @@ def handle_action_command(event, text):
             "is_support": False
         }
         supabase.table("orders").insert(record).execute()
-        all_orders = supabase.table("orders").select("*").eq("order_date", order_date).execute().data
-        line_bot_api.reply_message(event.reply_token, generate_summary_carousel(order_date, all_orders))
+        
+        # หลังจากกดเลือกแก้ไขตัวที่ผิดสำเร็จ ให้แสดงสรุปยอดทุกวันทั้งหมด
+        flex_msg = generate_all_days_summary_flex()
+        if flex_msg:
+            line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
     # 📌 เมื่อกดปุ่ม [✏️จัดการ] ข้างชื่อร้าน
@@ -491,9 +501,9 @@ def handle_action_command(event, text):
         new_qty = int(parts[3])
         res = supabase.table("orders").update({"qty": new_qty}).eq("id", record_id).execute()
         if res.data:
-            target_date = res.data[0]["order_date"]
-            all_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
-            line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
+            flex_msg = generate_all_days_summary_flex()
+            if flex_msg:
+                line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
     if parts[1] == "editprodcats":
@@ -549,9 +559,9 @@ def handle_action_command(event, text):
             "category": prod_info["category"]
         }).eq("id", record_id).execute()
         if res.data:
-            target_date = res.data[0]["order_date"]
-            all_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
-            line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
+            flex_msg = generate_all_days_summary_flex()
+            if flex_msg:
+                line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
     action_type = parts[1]
@@ -570,21 +580,20 @@ def handle_action_command(event, text):
         else:
             supabase.table("orders").update({"status": new_status}).eq("order_date", target_date).eq("shop_name", shop_name).execute()
             
-        updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
-        if updated_orders:
-            flex_msg = generate_summary_carousel(target_date, updated_orders)
+        flex_msg = generate_all_days_summary_flex()
+        if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         else:
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปเดตสำเร็จ (ไม่มีออเดอร์เหลือในวันที่ {target_date})"))
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปเดตสำเร็จ (ไม่มีออเดอร์เหลือในระบบแล้ว)"))
         
     elif action_type == "bulk":
         sub_action = parts[2]
         target_date = parts[3]
         if sub_action == "ordered":
             supabase.table("orders").update({"status": "Order แล้ว"}).eq("order_date", target_date).execute()
-            updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
-            flex_msg = generate_summary_carousel(target_date, updated_orders)
-            line_bot_api.reply_message(event.reply_token, flex_msg)
+            flex_msg = generate_all_days_summary_flex()
+            if flex_msg:
+                line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action == "uploaded":
             supabase.table("orders").delete().eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปสลิปและลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
