@@ -1,6 +1,6 @@
-gunicorn
-tzdata
-flask
-requests
+Flask
+line-bot-sdk
 supabase
-
+pytz
+gunicorn
+requests
