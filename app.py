@@ -1,4 +1,5 @@
 import os
+import re
 import difflib
 from datetime import datetime
 from flask import Flask, request, abort
@@ -25,7 +26,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping (6 หมวดหมู่สมบูรณ์ พร้อมคำค้นหาที่ยืดหยุ่น)
+# 📌 Master Product Mapping (6 หมวดหมู่สมบูรณ์)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -46,19 +47,14 @@ PRODUCT_MAP = {
     
     # Install (หมวด install)
     "H40L": {"name": "Hoshizaki 40L", "category": "install"},
-    "HOSHIZAKI 40": {"name": "Hoshizaki 40L", "category": "install"},
     "H90": {"name": "Hoshizaki 90L", "category": "install"},
-    "HOSHIZAKI 90": {"name": "Hoshizaki 90L", "category": "install"},
     "H120": {"name": "Hoshizaki 120L", "category": "install"},
-    "HOSHIZAKI 120": {"name": "Hoshizaki 120L", "category": "install"},
     "CELLI": {"name": "Celli", "category": "install"},
     "SCT": {"name": "Standless Counter", "category": "install"},
-    "COUNTER": {"name": "Standless Counter", "category": "install"},
     "TABLE": {"name": "Standless Table", "category": "install"},
     
     # POSM (หมวด posm)
     "AST": {"name": "A-Stand", "category": "posm"},
-    "A-STAND": {"name": "A-Stand", "category": "posm"},
     "LEDA2V": {"name": "LED Signage A2 แนวตั้ง", "category": "posm"},
     "LEDA2L": {"name": "LED Signage A2 แนวนอน", "category": "posm"},
     "LEDA3V": {"name": "LED Signage A3 แนวตั้ง", "category": "posm"},
@@ -66,9 +62,7 @@ PRODUCT_MAP = {
     "LEDA4V": {"name": "LED Signage A4 แนวตั้ง", "category": "posm"},
     "LEDA4L": {"name": "LED Signage A4 แนวนอน", "category": "posm"},
     "ACLA5": {"name": "อะคริลิกตั้งโต๊ะ A5", "category": "posm"},
-    "A5": {"name": "อะคริลิกตั้งโต๊ะ A5", "category": "posm"},
     "ACLA6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
-    "A6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
     "MHD": {"name": "Menu Holder", "category": "posm"},
     
     # OtherALC
@@ -109,27 +103,76 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
     
-    # 3. จัดการคู่มือการใช้งาน (Manual Categories)
+    # 2. จัดการคู่มือการใช้งานแบบ Flex Message (ข้อ 2)
     if text.lower() in ["คู่มือ", "help"]:
-        guide_msg = (
-            "📖 **คู่มือการใช้งาน LINE Bot**\n\n"
-            "• พิมพ์ `คู่มือ order` : วิธีการสั่งซื้อสินค้า\n"
-            "• พิมพ์ `คู่มือ สรุป` : วิธีการดูสรุป Order\n"
-            "• พิมพ์ `คู่มือ สินค้า` : รายการและรหัสสินค้าทั้งหมด"
+        flex_msg = FlexSendMessage(
+            alt_text="คู่มือการใช้งาน",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="📖 คู่มือการใช้งาน LINE Bot", weight='bold', size='lg', color='#1DB446'),
+                        SeparatorComponent(margin='md'),
+                        ButtonComponent(style='primary', margin='md', action=MessageAction(label='📝 วิธีการ Order', text='คู่มือ order')),
+                        ButtonComponent(style='primary', margin='sm', action=MessageAction(label='📊 วิธีดูสรุป Order', text='คู่มือ สรุป')),
+                        ButtonComponent(style='primary', margin='sm', action=MessageAction(label='🏷️ รายการรหัสสินค้า', text='คู่มือ สินค้า'))
+                    ]
+                )
+            )
         )
-        line_bot_api.reply_message(event.reply_token, TextMessage(text=guide_msg))
+        line_bot_api.reply_message(event.reply_token, flex_msg)
         return
     elif text.lower() == "คู่มือ order":
-        line_bot_api.reply_message(event.reply_token, TextMessage(text="📝 **วิธีการ Order:**\nพิมพ์ `[วันที่] [ชื่อร้าน] [รหัสสินค้า] [จำนวน] [สเตตัส]`\n(เช่น `18 GUZA L 1 pending`)\n- หากระบุแต่วัน (เช่น 18) จะนับเป็นเดือนปัจจุบัน\n- สามารถพิมพ์หลายบรรทัดเพื่อสั่งหลายออเดอร์พร้อมกันได้\n- พิมพ์ `sup` หรือ `SUP` นำหน้ารหัสเพื่อทำเป็นสินค้า Support"))
+        flex_msg = FlexSendMessage(
+            alt_text="คู่มือ Order",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="📝 วิธีการ Order", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        TextComponent(text="• พิมพ์: [วันที่] [ชื่อร้าน] [รหัสสินค้า] [จำนวน] [สเตตัส]\n• ตัวอย่าง: 18 GUZA L 1 pending\n• หากระบุแค่วัน (เช่น 18) จะนับเป็นเดือนปัจจุบัน\n• พิมพ์ sup หรือ SUP นำหน้ารหัสเพื่อทำสินค้า Support", wrap=True, size='sm', color='#555555')
+                    ]
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
         return
     elif text.lower() == "คู่มือ สรุป":
-        line_bot_api.reply_message(event.reply_token, TextMessage(text="📊 **วิธีการดูสรุป Order:**\n- พิมพ์ `สรุป` เพื่อดูยอดของวันนี้\n- พิมพ์ `สรุป [YYYY-MM-DD]` เพื่อดูยอดเฉพาะวันที่ต้องการ"))
+        flex_msg = FlexSendMessage(
+            alt_text="คู่มือสรุป",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="📊 วิธีการดูสรุป Order", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดของวันนี้\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ", wrap=True, size='sm', color='#555555'),
+                        ButtonComponent(style='primary', margin='md', action=MessageAction(label='👉 ดูสรุปวันนี้เลย', text='สรุป'))
+                    ]
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
         return
     elif text.lower() == "คู่มือ สินค้า":
-        line_bot_api.reply_message(event.reply_token, TextMessage(text="🏷️ **หมวดหมู่สินค้า:**\n1. Draft Beer: L, R, D\n2. Amenity: M, J, T, CO2\n3. Install: H40L, H90, H120, Celli, SCT, Table\n4. POSM: AST, LEDA2V, LEDA3V, ACLA5, MHD ฯลฯ\n5. OtherALC: GALF, GALR, TEND3, SOJY ฯลฯ\n6. Bottle/Cans: LB, DB, LC, WC, IPAC ฯลฯ"))
+        flex_msg = FlexSendMessage(
+            alt_text="คู่มือสินค้า",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="🏷️ หมวดหมู่สินค้าหลัก", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        TextComponent(text="1. Draft Beer: L, R, D\n2. Amenity: M, J, T, CO2\n3. Install: H40L, H90, Celli, Table\n4. POSM: AST, LEDA2V, ACLA5\n5. OtherALC: GALF, TEND3, SOJY\n6. Bottle/Cans: LB, DB, LC, IPAC", wrap=True, size='xs', color='#555555')
+                    ]
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 2.2 จัดการคำสั่งสรุป (สรุป / สรุป [วันที่])
+    # คำสั่งสรุป (สรุป / สรุป [วันที่])
     if text.startswith("สรุป"):
         parts = text.split()
         target_date = parts[1] if len(parts) > 1 else datetime.now().strftime("%Y-%m-%d")
@@ -150,38 +193,59 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # 1. จัดการการ Order สินค้า (รองรับหลายบรรทัดและความยืดหยุ่น)
+    # 3. จัดการการ Order สินค้าแบบยืดหยุ่น (รองรับติดกันหรือเว้นวรรค) (ข้อ 3)
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
     
     for line in lines:
-        parts = line.strip().split()
+        line_str = line.strip()
+        if not line_str:
+            continue
+            
+        # ใช้ Regex แยกส่วน: วันที่ (ตัวเลข 1-2 หลัก หรือ YYYY-MM-DD), ชื่อร้าน, สินค้า, จำนวน (ตัวเลขท้ายสุดหรือก่อนสถานะ), สเตตัส
+        # ตัวอย่าง: 18 GUZA L1 pending หรือ 18 GUZA L 1
+        parts = line_str.split()
         if len(parts) >= 3:
             raw_date = parts[0]
             shop_name = parts[1]
-            sku_input = parts[2].upper()
             
-            # แปลงวันที่ ถ้าระบุแค่วัน ให้ใช้เดือนปัจจุบัน
+            # ตรวจสอบว่าพาร์ทที่ 3 ติดกันหรือไม่ เช่น L1 หรือ L 1
+            remainder = " ".join(parts[2:])
+            # ค้นหาจำนวนตัวเลขที่อยู่ท้ายสุด หรือก่อนสถานะ
+            match_qty = re.search(r'\s+(\d+)(?:\s+(.*))?$', remainder)
+            
+            if match_qty:
+                qty_str = match_qty.group(1)
+                status_str = match_qty.group(2)
+                sku_raw = remainder[:match_qty.start()].strip().upper()
+                qty = int(qty_str)
+                status = status_str.strip() if status_str else "pending"
+            else:
+                # กรณีไม่ได้ใส่จำนวน ให้ default เป็น 1
+                sku_raw = parts[2].upper()
+                qty = 1
+                status = " ".join(parts[3:]) if len(parts) > 3 else "pending"
+
+            # แปลงวันที่
             if len(raw_date) <= 2:
                 order_date = f"{current_year_month}-{raw_date.zfill(2)}"
             else:
                 order_date = raw_date
                 
             # ตรวจสอบ Support Item ('sup' / 'SUP')
-            is_support = sku_input.startswith("SUP")
-            clean_sku = sku_input.replace("SUP", "", 1) if is_support else sku_input
+            is_support = sku_raw.startswith("SUP")
+            clean_sku = sku_raw.replace("SUP", "", 1) if is_support else sku_raw
             
-            # ตรวจสอบรหัสสินค้า (Product Mapping & Fuzzy Matching)
+            # ตรวจสอบ Product Mapping & Fuzzy Matching
             product_info = PRODUCT_MAP.get(clean_sku)
             if not product_info:
-                # ทำ Fuzzy Matching หาตัวที่ใกล้เคียงที่สุด
                 matches = difflib.get_close_matches(clean_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
                 if matches:
                     options_text = ", ".join([f"'{m}' ({PRODUCT_MAP[m]['name']})" for m in matches])
-                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}'\nคุณหมายถึงสินค้าเหล่านี้หรือไม่:\n{options_text}"))
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_raw}'\nคุณหมายถึงสินค้าเหล่านี้หรือไม่:\n{options_text}"))
                 else:
-                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}' กรุณาตรวจสอบรหัสในคู่มือ"))
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_raw}' กรุณาตรวจสอบรหัสในคู่มือ"))
                 return
                 
             product_name = product_info["name"]
@@ -189,11 +253,6 @@ def handle_message(event):
             if is_support:
                 product_name = f"support({product_name})"
 
-            # ดึง จำนวน (qty) และ Status (Default เป็น pending)
-            qty = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 1
-            status = parts[4] if len(parts) > 4 else "pending"
-
-            # บันทึกลง Supabase Table 'orders' ตรงตามโครงสร้างเดิม
             record = {
                 "order_date": order_date,
                 "shop_name": shop_name,
@@ -218,11 +277,10 @@ def handle_message(event):
 
 def handle_action_command(event, text):
     parts = text.split("_")
-    action_type = parts[1]
     
-    # 2.3.1 ปุ่มแก้ไข: เลือกว่าจะแก้ไขจำนวนหรือแก้ไขสินค้า
+    # 1. กดปุ่มแก้ไข (เลือกแก้จำนวน หรือแก้สินค้า) (ข้อ 1)
     if text.startswith("edit_"):
-        record_id = text.split("_")[1]
+        record_id = parts[1]
         flex_msg = FlexSendMessage(
             alt_text="เลือกวิธีแก้ไข",
             contents=BubbleContainer(
@@ -231,8 +289,8 @@ def handle_action_command(event, text):
                     contents=[
                         TextComponent(text="⚙️ เลือกรายการที่ต้องการแก้ไข", weight='bold', size='md'),
                         SeparatorComponent(margin='md'),
-                        ButtonComponent(style='primary', action=MessageAction(label='แก้ไขจำนวน', text=f"action_editqty_{record_id}")),
-                        ButtonComponent(style='secondary', action=MessageAction(label='แก้ไขสินค้า', text=f"action_editprod_{record_id}"))
+                        ButtonComponent(style='primary', action=MessageAction(label='✏️ แก้ไขจำนวน', text=f"action_editqtyprompt_{record_id}")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🏷️ เปลี่ยนสินค้า (เลือกหมวด)', text=f"action_editprodcats_{record_id}"))
                     ]
                 )
             )
@@ -240,23 +298,119 @@ def handle_action_command(event, text):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
+    # หน้าต่างบอกวิธีพิมพ์แก้จำนวน
+    if parts[1] == "editqtyprompt":
+        record_id = parts[2]
+        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"พิมพ์จำนวนใหม่สำหรับรายการนี้ได้เลย เช่น: `setqty_{record_id}_5`"))
+        return
+        
+    if parts[1] == "setqty":
+        record_id = parts[2]
+        new_qty = int(parts[3])
+        res = supabase.table("orders").update({"qty": new_qty}).eq("id", record_id).execute()
+        if res.data:
+            target_date = res.data[0]["order_date"]
+            all_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
+            line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
+        return
+
+    # แสดงหมวดหมู่สินค้าเพื่อให้เลือกเปลี่ยน
+    if parts[1] == "editprodcats":
+        record_id = parts[2]
+        flex_msg = FlexSendMessage(
+            alt_text="เลือกหมวดหมู่สินค้า",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[
+                        TextComponent(text="📂 เลือกหมวดหมู่สินค้าใหม่", weight='bold', size='md'),
+                        SeparatorComponent(margin='md'),
+                        ButtonComponent(style='secondary', action=MessageAction(label='🍺 Draft Beer', text=f"action_pickcat_{record_id}_d")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🧊 Amenity / CO2', text=f"action_pickcat_{record_id}_amenity")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🛠️ Install', text=f"action_pickcat_{record_id}_install")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='📋 POSM', text=f"action_pickcat_{record_id}_posm")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍾 OtherALC', text=f"action_pickcat_{record_id}_OtherALC")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍻 Bottle/Cans Beer', text=f"action_pickcat_{record_id}_Bottle/Cans"))
+                    ]
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
+    # แสดงรายการสินค้าในหมวดนั้นๆ ให้กดเลือก
+    if parts[1] == "pickcat":
+        record_id = parts[2]
+        cat_key = parts[3]
+        prod_buttons = []
+        for sku, info in PRODUCT_MAP.items():
+            if info["category"] == cat_key:
+                prod_buttons.append(ButtonComponent(style='link', action=MessageAction(label=f"{sku}: {info['name']}", text=f"action_setprod_{record_id}_{sku}")))
+        
+        flex_msg = FlexSendMessage(
+            alt_text="เลือกสินค้า",
+            contents=BubbleContainer(
+                body=BoxComponent(
+                    layout='vertical',
+                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons
+                )
+            )
+        )
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
+    # บันทึกสินค้าใหม่ที่เลือก
+    if parts[1] == "setprod":
+        record_id = parts[2]
+        new_sku = parts[3]
+        prod_info = PRODUCT_MAP.get(new_sku)
+        res = supabase.table("orders").update({
+            "product_code": new_sku,
+            "product_name": prod_info["name"],
+            "category": prod_info["category"]
+        }).eq("id", record_id).execute()
+        if res.data:
+            target_date = res.data[0]["order_date"]
+            all_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
+            line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
+        return
+
+    # 2. จัดการเปลี่ยนสถานะ / ปุ่ม Bulk (ข้อ 4: กดปุ่มแล้วแสดง Flex สรุป Order เสมอ)
+    action_type = parts[1]
     if action_type == "status":
         record_id = parts[2]
         new_status = parts[3]
+        
+        # ดึงวันที่ของรายการนี้ก่อนอัปเดตหรือลบ
+        curr_res = supabase.table("orders").select("order_date").eq("id", record_id).execute()
+        if not curr_res.data:
+            return
+        target_date = curr_res.data[0]["order_date"]
+
         if new_status == "อัพสลิปแล้ว":
             supabase.table("orders").delete().eq("id", record_id).execute()
         else:
             supabase.table("orders").update({"status": new_status}).eq("id", record_id).execute()
-        line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ อัปเดตสถานะเรียบร้อย"))
+            
+        # ดึงข้อมูลล่าสุดของวันนั้นมาแสดงเป็น Flex สรุป Order ทันที
+        updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
+        if updated_orders:
+            flex_msg = generate_summary_carousel(target_date, updated_orders)
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+        else:
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปเดตสำเร็จ (ไม่มีออเดอร์เหลือในวันที่ {target_date})"))
         
     elif action_type == "bulk":
         sub_action = parts[2]
         target_date = parts[3]
         if sub_action == "ordered":
             supabase.table("orders").update({"status": "Order แล้ว"}).eq("order_date", target_date).execute()
+            updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
+            flex_msg = generate_summary_carousel(target_date, updated_orders)
+            line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action in ["uploaded", "delete"]:
             supabase.table("orders").delete().eq("order_date", target_date).execute()
-        line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ ดำเนินการคำสั่งกลุ่มเรียบร้อย"))
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
 
 def generate_summary_carousel(order_date, orders):
     bubbles = []
@@ -271,7 +425,6 @@ def generate_summary_carousel(order_date, orders):
     for idx, chunk in enumerate(item_chunks):
         is_last = (idx == len(item_chunks) - 1)
         
-        # Requirement 2.4: ด้านบนเขียน วัน เดือน ปี ชัดเจน
         contents = [
             BoxComponent(
                 layout='vertical',
@@ -294,7 +447,6 @@ def generate_summary_carousel(order_date, orders):
                     ]
                 )
             )
-            # 5 ปุ่มสเตตัสครบถ้วน + ปุ่มแก้ไข/ลบ
             contents.append(BoxComponent(
                 layout='horizontal', spacing='xs', margin='sm',
                 contents=[
@@ -331,7 +483,6 @@ def generate_summary_carousel(order_date, orders):
             contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
             contents.append(SeparatorComponent(margin='md'))
             
-            # Requirement 2.5: 3 ปุ่ม Apply ทุก Order ในวัน
             contents.append(BoxComponent(
                 layout='vertical', spacing='sm',
                 contents=[
@@ -341,7 +492,6 @@ def generate_summary_carousel(order_date, orders):
                 ]
             ))
 
-        # แสดงหมายเลขหน้า Carousel (เช่น 1/2)
         contents.append(TextComponent(text=f"หน้าที่ {idx+1}/{len(item_chunks)}", size='xxs', color='#aaaaaa', align='center', margin='md'))
         bubbles.append(BubbleContainer(body=BoxComponent(layout='vertical', contents=contents)))
 
