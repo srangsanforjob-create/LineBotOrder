@@ -283,13 +283,13 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้า + รองรับเคสสินค้าผิดหลายตัวพร้อมกัน (ไม่ตกหล่น) ──
+    # ── ระบบรับ Order รองรับหลายสินค้า + รองรับเคสสินค้าผิดหลายตัวพร้อมกัน (วนแก้จนครบทุกตัว) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
     
     parsed_orders = []
-    errors_list = []  # 📌 รองรับเก็บรายการที่ผิดพลาดหลายตัวพร้อมกัน
+    errors_list = []
 
     for line in lines:
         line_str = line.strip()
@@ -359,7 +359,6 @@ def handle_message(event):
                 
                 product_info = PRODUCT_MAP.get(clean_sku)
                 if not product_info:
-                    # 📌 บันทึกเก็บรหัสที่ผิดใส่ List ไว้ทั้งหมด (ไม่เบรกการทำงาน เพื่อให้อ่านตัวถัดไปต่อจนจบ)
                     errors_list.append({
                         "sku": sku_raw,
                         "order_date": order_date,
@@ -393,26 +392,42 @@ def handle_message(event):
         if res.data:
             success_records.append(res.data[0])
 
-    # 📌 หากพบรหัสสินค้าผิด ให้สร้างปุ่มเลือกแก้ไขสำหรับรายการที่ผิดตัวแรกในลิสต์
+    # 📌 หากพบรหัสสินค้าผิด ให้สร้างปุ่มเลือกแก้ไขตัวแรก พร้อมแนบรายการที่เหลือไปใน Action Text
     if errors_list:
-        err = errors_list[0] # หยิบตัวแรกมาให้ผู้ใช้กดแก้ก่อน
+        err = errors_list[0]
+        remaining_errors = errors_list[1:]  # รายการที่เหลือคิวถัดไป
+        
+        # แปลง remaining_errors ให้เป็นสตริงเพื่อส่งต่อทางปุ่ม Action
+        rem_str = ""
+        if remaining_errors:
+            rem_parts = []
+            for e in remaining_errors:
+                rem_parts.append(f"{e['order_date']}|{e['shop_name']}|{e['sku']}|{e['qty']}|{e['status']}")
+            rem_str = "@@".join(rem_parts)
+
         matches = difflib.get_close_matches(err["sku"], PRODUCT_MAP.keys(), n=3, cutoff=0.4)
         if matches:
             buttons = []
             for m in matches:
+                action_text = f"quickadd_{err['order_date']}_{err['shop_name']}_{m}_{err['qty']}_{err['status']}"
+                if rem_str:
+                    action_text += f"__{rem_str}"
                 buttons.append(ButtonComponent(
                     style='primary',
                     margin='sm',
-                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{err['order_date']}_{err['shop_name']}_{m}_{err['qty']}_{err['status']}")
+                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=action_text)
                 ))
+            
+            total_err_count = len(errors_list)
             flex_msg = FlexSendMessage(
                 alt_text="เลือกสินค้าที่ถูกต้อง",
                 contents=BubbleContainer(
                     body=BoxComponent(
                         layout='vertical',
                         contents=[
-                            TextComponent(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัส '{err['sku']}'", weight='bold', size='sm', color='#FF5555'),
-                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียง:", size='xs', color='#666666', margin='sm'),
+                            TextComponent(text=f"⚠️ พบรหัสสินค้าไม่ถูกต้อง ({total_err_count} รายการ)", weight='bold', size='sm', color='#FF5555'),
+                            TextComponent(text=f"กำลังแก้ไขรหัสผิด: '{err['sku']}'", size='xs', color='#333333', margin='sm', weight='bold'),
+                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียง:", size='xs', color='#666666', margin='xs'),
                             SeparatorComponent(margin='md')
                         ] + buttons
                     )
@@ -442,9 +457,16 @@ def handle_action_command(event, text):
         shop_name = parts[2]
         sku = parts[3]
         qty = int(parts[4])
-        item_status = parts[5] if len(parts) > 5 else "pending"
-        prod_info = PRODUCT_MAP.get(sku)
         
+        # ตรวจสอบว่ามี Status ติดมาด้วยหรือไม่ (แยกด้วย __ สำหรับรายการที่เหลือ)
+        status_and_rem = parts[5] if len(parts) > 5 else "pending"
+        if "__" in status_and_rem:
+            item_status, rem_str = status_and_rem.split("__", 1)
+        else:
+            item_status = status_and_rem
+            rem_str = ""
+
+        prod_info = PRODUCT_MAP.get(sku)
         record = {
             "order_date": order_date,
             "shop_name": shop_name,
@@ -457,7 +479,63 @@ def handle_action_command(event, text):
         }
         supabase.table("orders").insert(record).execute()
         
-        # หลังจากกดเลือกแก้ไขตัวที่ผิดสำเร็จ ให้แสดงสรุปยอดทุกวันทั้งหมด
+        # 📌 หากยังมีรายการที่ผิดค้างอยู่ในคิว (rem_str) ให้แปลงกลับมาสร้างปุ่มแก้ตัวถัดไปต่อเนื่องทันที
+        if rem_str:
+            next_err_list = []
+            for item_block in rem_str.split("@@"):
+                fields = item_block.split("|")
+                if len(fields) == 5:
+                    next_err_list.append({
+                        "order_date": fields[0],
+                        "shop_name": fields[1],
+                        "sku": fields[2],
+                        "qty": int(fields[3]),
+                        "status": fields[4]
+                    })
+            
+            if next_err_list:
+                err = next_err_list[0]
+                remaining_errors = next_err_list[1:]
+                
+                new_rem_str = ""
+                if remaining_errors:
+                    rem_parts = []
+                    for e in remaining_errors:
+                        rem_parts.append(f"{e['order_date']}|{e['shop_name']}|{e['sku']}|{e['qty']}|{e['status']}")
+                    new_rem_str = "@@".join(rem_parts)
+
+                matches = difflib.get_close_matches(err["sku"], PRODUCT_MAP.keys(), n=3, cutoff=0.4)
+                if matches:
+                    buttons = []
+                    for m in matches:
+                        action_text = f"quickadd_{err['order_date']}_{err['shop_name']}_{m}_{err['qty']}_{err['status']}"
+                        if new_rem_str:
+                            action_text += f"__{new_rem_str}"
+                        buttons.append(ButtonComponent(
+                            style='primary',
+                            margin='sm',
+                            action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=action_text)
+                        ))
+                    
+                    total_remaining = len(next_err_list)
+                    flex_msg = FlexSendMessage(
+                        alt_text="เลือกสินค้าที่ถูกต้อง",
+                        contents=BubbleContainer(
+                            body=BoxComponent(
+                                layout='vertical',
+                                contents=[
+                                    TextComponent(text=f"⚠️ ยังมีรหัสผิดเหลืออีก {total_remaining} รายการ", weight='bold', size='sm', color='#FF5555'),
+                                    TextComponent(text=f"กำลังแก้ไขรหัสผิด: '{err['sku']}'", size='xs', color='#333333', margin='sm', weight='bold'),
+                                    TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียง:", size='xs', color='#666666', margin='xs'),
+                                    SeparatorComponent(margin='md')
+                                ] + buttons
+                            )
+                        )
+                    )
+                    line_bot_api.reply_message(event.reply_token, flex_msg)
+                    return
+
+        # หากเคลียร์ครบทุกตัวแล้ว แสดงสรุปยอดทั้งหมดทันที
         flex_msg = generate_all_days_summary_flex()
         if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
