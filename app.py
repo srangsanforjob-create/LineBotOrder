@@ -1,163 +1,438 @@
-import os
-from datetime import datetime, timedelta
-import pytz
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage, FlexSendMessage,
-    BubbleContainer, BoxComponent, TextComponent, ButtonComponent, SeparatorComponent, CarouselContainer
+    MessageEvent, TextMessage, PostbackEvent, 
+    TextSendMessage, FlexSendMessage
 )
-from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# ดึงค่า Environment Variables จาก Render
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# ==========================================
+# CONFIGURATIONS (ใส่ Channel Access Token และ Secret ของคุณ)
+# ==========================================
+line_bot_api = LineBotApi('YOUR_CHANNEL_ACCESS_TOKEN')
+handler = WebhookHandler('YOUR_CHANNEL_SECRET')
 
-line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# ==========================================
+# DATA & CATALOG DICTIONARY
+# ==========================================
+PRODUCT_FULL_NAMES = {
+    "L": "GTD LAGER 20L",
+    "R": "GTD ROSE 20L",
+    "D": "GTD DUNKEL",
+    "M": "แก้ว (Mug)",
+    "J": "เหยือก (Jug)",
+    "T": "ทาวเวอร์ (Tower)",
+    "CO2": "CO2",
+    "supL": "support GTD LAGER 20L",
+    "supแก้ว 0.3L": "support แก้ว 0.3L"
+}
 
-# ตั้งค่า Timezone ไทย
-BANGKOK_TZ = pytz.timezone('Asia/Bangkok')
-COMPLETED_STATUS = "upslip"  # สถานะที่ถือว่าจบงานแล้ว
+PRODUCT_CATEGORIES = {
+    "beer": {
+        "title": "🍺 เบียร์สด (Draft Beer)",
+        "items": [
+            {"code": "L", "name": "GTD LAGER 20L"},
+            {"code": "R", "name": "GTD ROSE 20L"},
+            {"code": "D", "name": "GTD DUNKEL"}
+        ]
+    },
+    "support": {
+        "title": "🥤 อุปกรณ์ / Support",
+        "items": [
+            {"code": "CO2", "name": "CO2"},
+            {"code": "supL", "name": "support GTD LAGER 20L"},
+            {"code": "supแก้ว 0.3L", "name": "support แก้ว 0.3L"}
+        ]
+    }
+}
+
+STATUSES = [
+    {"label": "ยังไม่สั่ง", "value": "ยังไม่ได้ออเดอร์"},
+    {"label": "ออร์เดอร์", "value": "ออเดอร์แล้ว"},
+    {"label": "ส่งสลิปแล้ว", "value": "อัปสลิปแล้ว"},
+    {"label": "Overdue", "value": "Overdue"},
+    {"label": "เครดิต", "value": "เครดิต"},
+    {"label": "วงเงินไม่พอ", "value": "วงเงินไม่พอ"}
+]
+
+def get_full_product_name(code):
+    return PRODUCT_FULL_NAMES.get(code, code)
+
+# ==========================================
+# UI COMPONENTS (FLEX MESSAGES)
+# ==========================================
+
+def create_store_box(index, store_name, status, items):
+    """ สร้างกล่องข้อมูลรายร้าน (ไม่มีวันที่ซ้ำซ้อนด้านใน) """
+    item_contents = []
+    for item in items:
+        full_name = get_full_product_name(item['name'])
+        item_contents.append({
+            "type": "text",
+            "text": f"• {full_name} : {item['qty']}",
+            "size": "sm",
+            "color": "#333333"
+        })
+        
+    row1, row2 = [], []
+    for i, s in enumerate(STATUSES):
+        btn = {
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+                "type": "postback",
+                "label": s["label"],
+                "data": f"action=update_status&store={store_name}&status={s['value']}"
+            }
+        }
+        if i < 3:
+            row1.append(btn)
+        else:
+            row2.append(btn)
+
+    store_block = {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+            {
+                "type": "text",
+                "text": f"🏪 {index}. {store_name} | [{status}]",
+                "weight": "bold",
+                "size": "sm",
+                "color": "#1DB446"
+            },
+            {"type": "separator", "margin": "xs"}
+        ] + item_contents + [
+            {"type": "separator", "margin": "md"},
+            {"type": "box", "layout": "horizontal", "spacing": "sm", "contents": row1},
+            {"type": "box", "layout": "horizontal", "spacing": "sm", "contents": row2},
+            {
+                "type": "button",
+                "style": "link",
+                "height": "sm",
+                "action": {
+                    "type": "postback",
+                    "label": "✏️ แก้ไขออเดอร์ร้านนี้",
+                    "data": f"action=edit_menu&store={store_name}"
+                }
+            },
+            {"type": "separator", "margin": "lg"}
+        ]
+    }
+    return store_block
+
+def create_edit_choice_flex(store_name):
+    """ การ์ดเลือกโหมดแก้ไข (ซ้าย: แก้จำนวน | ขวา: แก้ไขสินค้า) """
+    return FlexSendMessage(
+        alt_text=f"เลือกวิธีแก้ไขออเดอร์ {store_name}",
+        contents={
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": f"🛠️ แก้ไขออเดอร์: {store_name}",
+                        "weight": "bold",
+                        "size": "sm",
+                        "color": "#333333"
+                    },
+                    {"type": "separator", "margin": "sm"},
+                    {
+                        "type": "box",
+                        "layout": "horizontal",  # จัดเรียง ซ้าย - ขวา
+                        "spacing": "sm",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "primary",
+                                "height": "sm",
+                                "color": "#0066CC",  # ซ้าย: แก้ไขจำนวน
+                                "action": {
+                                    "type": "postback",
+                                    "label": "🔢 แก้ไขจำนวน",
+                                    "data": f"action=start_edit_qty&store={store_name}"
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "primary",
+                                "height": "sm",
+                                "color": "#D35400",  # ขวา: แก้ไขสินค้า
+                                "action": {
+                                    "type": "postback",
+                                    "label": "📦 แก้ไขสินค้า",
+                                    "data": f"action=select_category&store={store_name}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    )
+
+def create_category_flex(store_name):
+    """ เลือกหมวดหมู่สินค้าสำหรับการเปลี่ยนสินค้า """
+    buttons = []
+    for cat_key, cat_data in PRODUCT_CATEGORIES.items():
+        buttons.append({
+            "type": "button",
+            "style": "secondary",
+            "height": "sm",
+            "action": {
+                "type": "postback",
+                "label": cat_data["title"],
+                "data": f"action=select_item&store={store_name}&cat={cat_key}"
+            }
+        })
+        
+    return FlexSendMessage(
+        alt_text="เลือกหมวดหมู่สินค้า",
+        contents={
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {"type": "text", "text": f"📁 เลือกหมวดหมู่ ({store_name})", "weight": "bold", "size": "sm"},
+                    {"type": "separator", "margin": "sm"}
+                ] + buttons
+            }
+        }
+    )
+
+def create_item_flex(store_name, cat_key):
+    """ เลือกสินค้าจริงในหมวดหมู่นั้นๆ """
+    cat_data = PRODUCT_CATEGORIES.get(cat_key, {"items": []})
+    buttons = []
+    for item in cat_data["items"]:
+        buttons.append({
+            "type": "button",
+            "style": "primary",
+            "height": "sm",
+            "color": "#1DB446",
+            "action": {
+                "type": "postback",
+                "label": item["name"],
+                "data": f"action=apply_new_item&store={store_name}&sku={item['code']}"
+            }
+        })
+        
+    return FlexSendMessage(
+        alt_text="เลือกสินค้า",
+        contents={
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {"type": "text", "text": f"📦 เลือกสินค้าที่จะเปลี่ยน ({store_name})", "weight": "bold", "size": "sm"},
+                    {"type": "separator", "margin": "sm"}
+                ] + buttons
+            }
+        }
+    )
+
+def create_guide_menu_flex():
+    """ เมนูคู่มือหลัก (แสดงปุ่มให้เลือกหัวข้อ) """
+    return FlexSendMessage(
+        alt_text="📖 ศูนย์ช่วยเหลือ & คู่มือการใช้งาน",
+        contents={
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box",
+                "layout": "vertical",
+                "spacing": "sm",
+                "contents": [
+                    {
+                        "type": "text",
+                        "text": "📖 ศูนย์ช่วยเหลือ & คู่มือ",
+                        "weight": "bold",
+                        "size": "sm",
+                        "color": "#1DB446"
+                    },
+                    {"type": "text", "text": "กรุณาเลือกหัวข้อที่ต้องการศึกษาครับ:", "size": "xs", "color": "#777777"},
+                    {"type": "separator", "margin": "sm"},
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": "📊 1. วิธีดูสรุปยอดออเดอร์",
+                            "data": "action=guide&topic=summary"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": "📝 2. วิธี Input ออเดอร์สินค้า",
+                            "data": "action=guide&topic=input"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": "✏️ 3. วิธีแก้ไขออเดอร์รายร้าน",
+                            "data": "action=guide&topic=edit"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "primary",
+                        "height": "sm",
+                        "color": "#D35400",
+                        "action": {
+                            "type": "postback",
+                            "label": "🍺 4. ดูแคตตาล็อกสินค้าทั้งหมด",
+                            "data": "action=guide&topic=catalog"
+                        }
+                    }
+                ]
+            }
+        }
+    )
+
+# ==========================================
+# WEBHOOK & EVENT HANDLERS
+# ==========================================
 
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
     body = request.get_data(as_text=True)
-    app.logger.info("Request body: " + body)
     try:
-        handler.handle(body, signature)
+        handler.handle(body, InvalidSignatureError)
     except InvalidSignatureError:
         abort(400)
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    user_message = event.message.text.strip()
-    now_bkk = datetime.now(BANGKOK_TZ)
+def handle_text_message(event):
+    text = event.message.text.strip().lower()
     
-    orders = []
-    title_text = ""
-    show_date_flag = False
-
-    # 1. คำสั่ง "งานค้าง" (ดึงทุกสถานะ ยกเว้น upslip ไม่จำกัดวันที่ + แสดงวันที่ + แบ่งหน้า)
-    if user_message.startswith("งานค้าง"):
-        parts = user_message.split(" ")
-        page = 1
-        if len(parts) > 1 and parts[1].isdigit():
-            page = int(parts[1])
-            
-        limit = 20  # จำนวนรายการต่อหน้า (แบ่งเป็น Bubble ละ 5 รายการ)
-        offset = (page - 1) * limit
-
-        response = supabase.table("orders").select("*", count="exact") \
-            .neq("status", COMPLETED_STATUS) \
-            .order("order_date", desc=False) \
-            .range(offset, offset + limit - 1) \
-            .execute()
+    # 1. เช็กคำสั่งเรียกดูคู่มือ
+    if text in ["คู่มือ", "help", "วิธีใช้", "แคตตาล็อก"]:
+        guide_menu = create_guide_menu_flex()
+        line_bot_api.reply_message(event.reply_token, guide_menu)
+        return
         
-        orders = response.data
-        title_text = f"งานค้าง (หน้า {page})"
-        show_date_flag = True
-
-    # 2. คำสั่ง "สรุป" (ตั้งแต่วันย้อนหลัง 1 วัน ถึงอนาคต หรือระบุวัน)
-    elif user_message.startswith("สรุป"):
-        parts = user_message.split(" ")
-        
-        if len(parts) > 1 and not parts[1].isdigit():
-            # กรณีระบุวันที่ เช่น "สรุป 11/11/2026"
-            target_date = parts[1]
-            response = supabase.table("orders").select("*") \
-                .eq("order_date", target_date) \
-                .execute()
-            orders = response.data
-            title_text = f"สรุปยอดวันที่ {target_date}"
-        else:
-            # กรณีพิมพ์ "สรุป" ปกติ (ย้อนหลัง 1 วัน ถึง อนาคต 30 วัน)
-            yesterday_date = (now_bkk - timedelta(days=1)).strftime("%Y-%m-%d")
-            future_date = (now_bkk + timedelta(days=30)).strftime("%Y-%m-%d")
-            
-            response = supabase.table("orders").select("*") \
-                .gte("order_date", yesterday_date) \
-                .lte("order_date", future_date) \
-                .execute()
-            orders = response.data
-            title_text = "สรุปยอด (เมื่อวาน - อนาคต)"
-            show_date_flag = True
-
-    # ส่งข้อความกลับหาผู้ใช้ถ้ามีคำสั่งตรงกัน
-    if orders or user_message.startswith("สรุป") or user_message.startswith("งานค้าง"):
-        if not orders:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="🎉 ไม่พบข้อมูลออเดอร์ในช่วงเวลานี้ครับ")
-            )
-        else:
-            flex_message = create_order_carousel(orders, title_text, show_date_flag)
-            line_bot_api.reply_message(event.reply_token, flex_message)
-
-def create_order_carousel(orders, title_prefix, show_date=False):
-    """ สร้าง Flex Message Carousel แบ่ง Bubble ละไม่เกิน 5 รายการ ป้องกัน Payload เกิน 50 KB """
-    bubbles = []
-    chunk_size = 5  # 5 รายการต่อ 1 Bubble
-    
-    for i in range(0, len(orders), chunk_size):
-        chunk = orders[i:i + chunk_size]
-        bubble_index = (i // chunk_size) + 1
-        
-        contents_list = [
-            TextComponent(text=f"{title_prefix} (ส่วนที่ {bubble_index})", weight="bold", size="md", color="#1DB446")
-        ]
-        
-        for order in chunk:
-            contents_list.append(SeparatorComponent(margin="md"))
-            
-            # ดึงข้อมูลจากฐานข้อมูล
-            cust_name = order.get("customer_name", "ไม่ระบุชื่อ")
-            status = order.get("status", "ยังไม่ได้ออเดอร์")
-            order_date = order.get("order_date", "")
-            
-            # แสดงวันที่กำกับถ้าถูกเปิดใช้งาน (เช่น หน้างานค้าง หรือสรุปภาพรวม)
-            if show_date and order_date:
-                contents_list.append(TextComponent(text=f"📅 วันที่: {order_date}", size="xs", color="#888888", margin="sm"))
-                
-            contents_list.append(TextComponent(text=f"ลูกค้า: {cust_name} | สเตตัส: {status}", size="sm", wrap=True, margin="sm"))
-            
-            # ปุ่มเปลี่ยนสเตตัสทั้ง 6 แบบ (สามารถปรับ Action Postback ตามระบบเดิมของคุณได้เลย)
-            # ตัวอย่างการใส่ปุ่มเปลี่ยนสถานะย่อๆ ในแต่ละรายการ
-            contents_list.append(
-                BoxComponent(
-                    layout="baseline",
-                    margin="sm",
-                    contents=[
-                        TextComponent(text=f"สถานะปัจจุบัน: {status}", size="xs", color="#555555", wrap=True)
-                    ]
-                )
-            )
-
-        bubble = BubbleContainer(
-            body=BoxComponent(
-                layout="vertical",
-                contents=contents_list
-            )
+    # 2. เช็กกรณีพิมพ์ตัวเลขเดี่ยวๆ (เพื่ออัปเดตจำนวนสินค้าหลังเลือกโหมดแก้จำนวน)
+    if event.message.text.strip().isdigit():
+        new_qty = int(event.message.text.strip())
+        # TODO: ดึง Session ร้านที่กำลังแก้ไขอยู่ แล้วอัปเดตจำนวนลง Supabase
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"✅ อัปเดตจำนวนใหม่เป็น {new_qty} เรียบร้อยแล้วครับ!")
         )
-        bubbles.append(bubble)
+        return
         
-        # LINE Carousel รองรับสูงสุด 12 Bubbles ต่อ 1 Request เพื่อความปลอดภัย
-        if len(bubbles) >= 12:
-            break
+    # 3. เช็กคำสั่งสรุปยอดเบื้องต้น
+    if text.startswith("สรุป"):
+        # TODO: ดึงข้อมูลจาก Supabase มาสร้าง Carousel Flex Message แล้วส่งกลับ
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="📊 [ระบบกำลังจำลอง] แสดงสรุปยอดออเดอร์ทั้งหมดในรูปแบบ Carousel...")
+        )
 
-    return FlexSendMessage(
-        alt_text=title_prefix,
-        contents=CarouselContainer(contents=bubbles)
-    )
+@handler.add(PostbackEvent)
+def handle_postback(event):
+    data = event.postback.data
+    params = dict(item.split('=') for item in data.split('&'))
+    action = params.get('action')
+    store_name = params.get('store')
+    
+    # --- จัดการเรื่องคู่มือ (Guide Topics) ---
+    if action == 'guide':
+        topic = params.get('topic')
+        if topic == 'summary':
+            content = (
+                "📊 [1. วิธีดูสรุปยอดออเดอร์]\n\n"
+                "• พิมพ์ 'สรุป' : ดูยอดออเดอร์ทั้งหมดของวันนี้\n"
+                "• พิมพ์ 'สรุป 16/11/2026' : ดูเฉพาะวันที่กำหนด\n"
+                "• พิมพ์ 'สรุป ออเดอร์แล้ว' : กรองดูเฉพาะสถานะ\n"
+                "• ปุ่มหัวการ์ด: กด [📦 ออเดอร์ทั้งหมด] หรือ [🟢 ส่งสลิปทั้งหมด] เพื่อเปลี่ยนสถานะยกกลุ่ม"
+            )
+        elif topic == 'input':
+            content = (
+                "📝 [2. วิธี Input ออเดอร์สินค้า]\n\n"
+                "• รูปแบบ: [ชื่อร้าน] [รหัสสินค้า] [จำนวน]\n"
+                "• ตัวอย่าง: สะออน L 2, M 5\n"
+                "• ดูรหัสย่อสินค้าได้จากหมวดแคตตาล็อก"
+            )
+        elif topic == 'edit':
+            content = (
+                "✏️ [3. วิธีแก้ไขออเดอร์รายร้าน]\n\n"
+                "1. กดปุ่ม '✏️ แก้ไขออเดอร์ร้านนี้' ที่การ์ดร้าน\n"
+                "2. ฝั่งซ้าย [🔢 แก้ไขจำนวน] ➔ พิมพ์ตัวเลขใหม่ได้เลย\n"
+                "3. ฝั่งขวา [📦 แก้ไขสินค้า] ➔ กดเลือกหมวดหมู่และสินค้าผ่านหน้าจอ"
+            )
+        elif topic == 'catalog':
+            content = (
+                "🍺 [4. แคตตาล็อกสินค้าทั้งหมด]\n\n"
+                "• L : GTD LAGER 20L\n"
+                "• R : GTD ROSE 20L\n"
+                "• D : GTD DUNKEL\n"
+                "• M : แก้ว (Mug)\n"
+                "• J : เหยือก (Jug)\n"
+                "• T : ทาวเวอร์ (Tower)\n"
+                "• CO2 : CO2\n"
+                "• supL : support GTD LAGER 20L\n"
+                "• supแก้ว 0.3L : support แก้ว 0.3L"
+            )
+        else:
+            content = "❌ ไม่พบหัวข้อคู่มือ"
+        
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=content))
+        return
+
+    # --- จัดการเรื่องการแก้ไขออเดอร์ (Edit Flow) ---
+    if action == 'edit_menu':
+        flex_msg = create_edit_choice_flex(store_name)
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        
+    elif action == 'start_edit_qty':
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"🔢 [โหมดแก้จำนวน: {store_name}]\nกรุณาพิมพ์ตัวเลขจำนวนใหม่ที่ต้องการได้เลยครับ (เช่น 3)")
+        )
+        
+    elif action == 'select_category':
+        flex_msg = create_category_flex(store_name)
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        
+    elif action == 'select_item':
+        cat_key = params.get('cat')
+        flex_msg = create_item_flex(store_name, cat_key)
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        
+    elif action == 'apply_new_item':
+        sku = params.get('sku')
+        full_name = get_full_product_name(sku)
+        # TODO: บันทึกการเปลี่ยนสินค้าลง Supabase
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"✅ เปลี่ยนสินค้าของร้าน '{store_name}' เป็น [{full_name}] เรียบร้อยแล้วครับ!")
+        )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(port=5000)
