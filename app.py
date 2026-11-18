@@ -202,14 +202,22 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
+        def is_valid_product(tok_str):
+            clean_t = tok_str.lower().strip()
+            if clean_t in ALIAS_MAP or clean_t in CODES:
+                return True
+            if re.match(r"^sup[a-z0-9\-]+$", clean_t):
+                return True
+            m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_t)
+            if m:
+                p_part = m.group(1).lower()
+                if p_part in ALIAS_MAP or p_part in CODES or p_part.startswith("sup"):
+                    return True
+            return False
+
         first_item_idx = -1
         for i, token in enumerate(tokens):
-            clean_tok = token.lower().strip()
-            if clean_tok in ALIAS_MAP or clean_tok in CODES:
-                first_item_idx = i
-                break
-            m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_tok)
-            if m and m.group(1).lower() in ALIAS_MAP:
+            if is_valid_product(token):
                 first_item_idx = i
                 break
 
@@ -226,17 +234,47 @@ def parse_order_text(raw_text):
             tok = item_tokens[i]
             clean_tok = tok.lower().strip()
 
+            # ตรวจสอบรูปแบบ sup นำหน้าติดกับตัวเลข เช่น supl1 หรือ sup-l1
+            m_sup_attached = re.match(r"^(sup[a-z0-9\-]+)(-?\d*)$", clean_tok)
+            if m_sup_attached and m_sup_attached.group(1):
+                p_part = m_sup_attached.group(1)
+                qty_str = m_sup_attached.group(2)
+                qty_part = safe_int(qty_str) if qty_str else 0
+                
+                if qty_part == 0 and i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i + 1]):
+                    qty_part = safe_int(item_tokens[i + 1])
+                    i += 1
+                if qty_part == 0:
+                    qty_part = 1
+
+                code = f"sup_{p_part}"
+                items[code] = items.get(code, 0) + qty_part
+                i += 1
+                continue
+
             m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_tok)
             if m:
-                p_part = m.group(1)
+                p_part = m.group(1).lower()
                 qty_part = safe_int(m.group(2))
-                if p_part in ALIAS_MAP:
+                if p_part.startswith("sup"):
+                    code = f"sup_{p_part}"
+                    items[code] = items.get(code, 0) + qty_part
+                    i += 1
+                    continue
+                elif p_part in ALIAS_MAP:
                     code = ALIAS_MAP[p_part]
                     items[code] = items.get(code, 0) + qty_part
                     i += 1
                     continue
 
-            if clean_tok in ALIAS_MAP:
+            if clean_tok.startswith("sup"):
+                code = f"sup_{clean_tok}"
+                qty = 1
+                if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i + 1]):
+                    qty = safe_int(item_tokens[i + 1])
+                    i += 1
+                items[code] = items.get(code, 0) + qty
+            elif clean_tok in ALIAS_MAP:
                 code = ALIAS_MAP[clean_tok]
                 qty = 1
                 if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i + 1]):
@@ -256,6 +294,12 @@ def parse_order_text(raw_text):
             })
 
     return parsed_items_list, global_errors
+
+def get_product_display_name(code):
+    if code.startswith("sup_"):
+        raw_name = code.replace("sup_", "").upper()
+        return f"support {raw_name}"
+    return PRODUCTS_DB.get(code, code)
 
 def make_mini_btn(label, data, color, style="primary"):
     return {
@@ -284,18 +328,23 @@ def build_carousel(chat_id):
     bubbles = []
     MAX_SHOPS_PER_BUBBLE = 4
 
+    # ดึงคีย์ทั้งหมดใน order เพื่อดูว่ามีคีย์ support อะไรบ้างที่ถูกบันทึกไว้ใน db
+    all_codes = set(CODES)
+    for order in orders:
+        for k in order.keys():
+            if k.startswith("sup_"):
+                all_codes.add(k)
+
     for ddate in sorted(grouped_by_date.keys()):
         date_orders = grouped_by_date[ddate]
-        daily_totals = {code: 0 for code in CODES}
+        daily_totals = {code: 0 for code in all_codes}
 
-        # คำนวณหายอดรวมทั้งหมดของวันนั้นไว้ก่อน
         for order in date_orders:
-            for code in CODES:
+            for code in all_codes:
                 q = safe_int(order.get(code))
                 if q > 0:
                     daily_totals[code] += q
 
-        # แบ่งก้อนออเดอร์ตามจำนวนที่กำหนด (เช่น 4 ร้านต่อ 1 Bubble)
         chunks = [date_orders[i:i + MAX_SHOPS_PER_BUBBLE] for i in range(0, len(date_orders), MAX_SHOPS_PER_BUBBLE)]
         total_pages = len(chunks)
 
@@ -325,10 +374,10 @@ def build_carousel(chat_id):
                 icon, label, color = STATUS_LABELS.get(order_status, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
 
                 item_rows = []
-                for code in CODES:
+                for code in all_codes:
                     q = safe_int(order.get(code))
                     if q > 0:
-                        p_name = PRODUCTS_DB.get(code, code)
+                        p_name = get_product_display_name(code)
                         item_rows.append({
                             "type": "box", "layout": "horizontal",
                             "contents": [
@@ -368,13 +417,12 @@ def build_carousel(chat_id):
                     ]
                 })
 
-            # แสดงสรุปยอดรวมเฉพาะในหน้าสุดท้ายของวันนั้นๆ
             if page_num == total_pages:
                 summary_rows = []
-                for code in CODES:
+                for code in all_codes:
                     tot = daily_totals[code]
                     if tot > 0:
-                        p_name = PRODUCTS_DB.get(code, code)
+                        p_name = get_product_display_name(code)
                         summary_rows.append({
                             "type": "box", "layout": "horizontal",
                             "contents": [
@@ -457,7 +505,7 @@ def process_webhook_event(event):
         if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
             send_reply(reply_token, [{
                 "type": "text",
-                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [วันที่] [ชื่อร้าน] [สินค้า จำนวน] [สถานะ]\nตัวอย่าง: 19 แซ่บยโส L2 R1 order\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [วันที่] [ชื่อร้าน] [สินค้า จำนวน] [สถานะ]\nตัวอย่าง: 19 แซ่บยโส supl1 R1 order\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
             }])
             return
 
@@ -468,7 +516,7 @@ def process_webhook_event(event):
         parsed_list, errors = parse_order_text(text)
 
         if not parsed_list:
-            if errors and any(k in text.lower() for k in ALIAS_MAP.keys()):
+            if errors and any(k in text.lower() for k in ALIAS_MAP.keys() or "sup" in text.lower()):
                 send_reply(reply_token, [{"type": "text", "text": "⚠️ รูปแบบไม่ถูกต้อง:\n" + "\n".join(errors)}])
             return
 
