@@ -520,11 +520,6 @@ def process_webhook_event(event):
             parsed_list = parse_order_text(text)
 
             if not parsed_list:
-                # ถ้าพิมพ์ข้อความทั่วไปที่ไม่ใช่ออเดอร์และไม่ใช่คำสั่ง ให้ส่งข้อความแจ้งเตือนเบาๆ กลับไปเพื่อให้รู้ว่าบอททำงานอยู่
-                send_reply(reply_token, [{
-                    "type": "text",
-                    "text": f"⚠️ รูปแบบไม่ถูกต้อง: พิมพ์คำว่า 'สรุป' เพื่อดูยอด หรือพิมพ์ออเดอร์ตามรูปแบบ เช่น '19 แช่บยโส L1'"
-                }])
                 return
 
             inserted_count = 0
