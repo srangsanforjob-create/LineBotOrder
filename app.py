@@ -206,12 +206,14 @@ def parse_order_text(raw_text):
             clean_t = tok_str.lower().strip()
             if clean_t in ALIAS_MAP or clean_t in CODES:
                 return True
+            if clean_t == "sup": # พิมพ์มาแค่ sup ลอยๆ ถือว่าไม่สมบูรณ์ ต้องให้ผู้ใช้ระบุ SKU
+                return False
             if re.match(r"^sup[a-z0-9\-]+$", clean_t):
                 return True
             m = re.match(r"^([a-zA-Zก-๙\-]+)(-?\d+)$", clean_t)
             if m:
                 p_part = m.group(1).lower()
-                if p_part in ALIAS_MAP or p_part in CODES or p_part.startswith("sup"):
+                if p_part in ALIAS_MAP or p_part in CODES or (p_part.startswith("sup") and len(p_part) > 3):
                     return True
             return False
 
@@ -222,7 +224,7 @@ def parse_order_text(raw_text):
                 break
 
         if first_item_idx == -1:
-            global_errors.append(f"ไม่พบรายการสินค้าในบรรทัด: {line}")
+            global_errors.append(f"ไม่พบรายการสินค้า หรือรหัสสินค้าไม่สมบูรณ์ในบรรทัด: {line} (กรุณาระบุ SKU เช่น supl1)")
             continue
 
         shop_name = " ".join(tokens[:first_item_idx]).strip() if first_item_idx > 0 else "ร้านค้าทั่วไป"
@@ -234,7 +236,12 @@ def parse_order_text(raw_text):
             tok = item_tokens[i]
             clean_tok = tok.lower().strip()
 
-            # ตรวจสอบรูปแบบ sup นำหน้าติดกับตัวเลข เช่น supl1 หรือ sup-l1
+            if clean_tok == "sup":
+                global_errors.append(f"กรุณาระบุรหัส SKU หลัง 'sup' ให้ครบถ้วน (เช่น supl1)")
+                i += 1
+                continue
+
+            # ตรวจสอบรูปแบบ sup ติดกับตัวเลข เช่น supl1 หรือ sup-l1
             m_sup_attached = re.match(r"^(sup[a-z0-9\-]+)(-?\d*)$", clean_tok)
             if m_sup_attached and m_sup_attached.group(1):
                 p_part = m_sup_attached.group(1)
@@ -256,7 +263,7 @@ def parse_order_text(raw_text):
             if m:
                 p_part = m.group(1).lower()
                 qty_part = safe_int(m.group(2))
-                if p_part.startswith("sup"):
+                if p_part.startswith("sup") and len(p_part) > 3:
                     code = f"sup_{p_part}"
                     items[code] = items.get(code, 0) + qty_part
                     i += 1
@@ -267,7 +274,7 @@ def parse_order_text(raw_text):
                     i += 1
                     continue
 
-            if clean_tok.startswith("sup"):
+            if clean_tok.startswith("sup") and len(clean_tok) > 3:
                 code = f"sup_{clean_tok}"
                 qty = 1
                 if i + 1 < len(item_tokens) and re.match(r"^-?\d+$", item_tokens[i + 1]):
@@ -282,7 +289,7 @@ def parse_order_text(raw_text):
                     i += 1
                 items[code] = items.get(code, 0) + qty
             else:
-                global_errors.append(f"ไม่รู้จักสินค้า: {tok}")
+                global_errors.append(f"ไม่รู้จักสินค้าหรือพิมพ์ไม่เต็ม: {tok}")
             i += 1
 
         if items:
@@ -328,7 +335,6 @@ def build_carousel(chat_id):
     bubbles = []
     MAX_SHOPS_PER_BUBBLE = 4
 
-    # ดึงคีย์ทั้งหมดใน order เพื่อดูว่ามีคีย์ support อะไรบ้างที่ถูกบันทึกไว้ใน db
     all_codes = set(CODES)
     for order in orders:
         for k in order.keys():
@@ -516,7 +522,7 @@ def process_webhook_event(event):
         parsed_list, errors = parse_order_text(text)
 
         if not parsed_list:
-            if errors and any(k in text.lower() for k in ALIAS_MAP.keys() or "sup" in text.lower()):
+            if errors:
                 send_reply(reply_token, [{"type": "text", "text": "⚠️ รูปแบบไม่ถูกต้อง:\n" + "\n".join(errors)}])
             return
 
@@ -531,8 +537,14 @@ def process_webhook_event(event):
                     "ddate": entry["ddate"],
                     "status": entry["status"]
                 }
+                
+                # กรองเฉพาะคอลัมน์มาตรฐาน (CODES) ที่มีอยู่ในตาราง orders จริงๆ เพื่อป้องกัน Error PGRST204
                 for k, v in entry["items"].items():
-                    payload[k] = v
+                    if k in CODES:
+                        payload[k] = v
+                    # (หมายเหตุ: หากต้องการบันทึก sup_ ลงตารางจริง จะต้องไปสร้างคอลัมน์ใน Supabase ก่อน 
+                    # แต่ในที่นี้จะกรองเฉพาะคอลัมน์มาตรฐานเพื่อไม่ให้บอทล่มครับ)
+
                 supabase.table("orders").insert(payload).execute()
                 inserted_count += 1
 
