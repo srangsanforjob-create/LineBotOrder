@@ -131,7 +131,7 @@ def handle_message(event):
         orders = res.data
         
         if not orders:
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=لف=f"📭 ไม่พบออเดอร์ในวันที่ {target_date}"))
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"📭 ไม่พบออเดอร์ในวันที่ {target_date}"))
             return
             
         flex_msg = generate_summary_carousel(target_date, orders)
@@ -160,7 +160,7 @@ def handle_message(event):
             if len(raw_date) <= 2:
                 order_date = f"{current_year_month}-{raw_date.zfill(2)}"
             else:
-                order_date = raw_date # สมมติรูปแบบ YYYY-MM-DD
+                order_date = raw_date
                 
             # ตรวจสอบ Support Item ('sup' หรือ 'SUP')
             is_support = sku_input.startswith("SUP")
@@ -169,7 +169,6 @@ def handle_message(event):
             # ตรวจสอบ Product Mapping
             product_info = PRODUCT_MAP.get(clean_sku)
             if not product_info:
-                # กรณีพิมพ์ไม่ตรง 100% ส่ง Flex Option ให้เลือก (ตาม Requirement 1)
                 line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ ไม่พบรหัสสินค้า '{sku_input}' กรุณาตรวจสอบรหัสในคู่มือ"))
                 return
                 
@@ -198,7 +197,6 @@ def handle_message(event):
                 success_records.append(res.data[0])
 
     if success_records:
-        # ดึงออเดอร์ทั้งหมดของวันนี้มาแสดงผลรวม
         target_date = success_records[0]["order_date"]
         res = supabase.table("orders").select("*").eq("order_date", target_date).execute()
         flex_msg = generate_summary_carousel(target_date, res.data)
@@ -207,22 +205,19 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextMessage(text="⚠️ รูปแบบการสั่งซื้อไม่ถูกต้อง กรุณาพิมพ์ 'คู่มือ' เพื่อดูวิธีใช้งาน"))
 
 def handle_action_command(event, text):
-    """ จัดการปุ่มกดเปลี่ยนสถานะ, ลบ หรือ Apply ทั้งหมด """
     parts = text.split("_")
     action_type = parts[1]
     
     if action_type == "status":
-        # action_status_[id]_[new_status]
         record_id = parts[2]
         new_status = parts[3]
         if new_status == "อัพสลิปแล้ว":
             supabase.table("orders").delete().eq("id", record_id).execute()
         else:
             supabase.table("orders").update({"status": new_status}).eq("id", record_id).execute()
-        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปเดตสถานะเรียบร้อย"))
+        line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ อัปเดตสถานะเรียบร้อย"))
         
     elif action_type == "bulk":
-        # action_bulk_[ordered / uploaded / delete]_[date]
         sub_action = parts[2]
         target_date = parts[3]
         if sub_action == "ordered":
@@ -231,10 +226,9 @@ def handle_action_command(event, text):
             supabase.table("orders").delete().eq("order_date", target_date).execute()
         elif sub_action == "delete":
             supabase.table("orders").delete().eq("order_date", target_date).execute()
-        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ดำเนินการคำสั่งกลุ่มเรียบร้อย"))
+        line_bot_api.reply_message(event.reply_token, TextMessage(text="✅ ดำเนินการคำสั่งกลุ่มเรียบร้อย"))
 
 def generate_summary_carousel(order_date, orders):
-    """ สร้าง Flex Message แบบ Carousel รองรับสูงสุด 5 รายการต่อหน้า พร้อมคำนวณเปอร์เซ็นต์ """
     bubbles = []
     total_items = len(orders)
     total_qty = sum(item["qty"] for item in orders)
@@ -247,7 +241,6 @@ def generate_summary_carousel(order_date, orders):
     for idx, chunk in enumerate(item_chunks):
         is_last = (idx == len(item_chunks) - 1)
         
-        # Requirement 2.4: ด้านบนสุดเขียน วัน เดือน ปี เด่นชัด
         contents = [
             BoxComponent(
                 layout='vertical',
@@ -270,7 +263,7 @@ def generate_summary_carousel(order_date, orders):
                     ]
                 )
             )
-            # 5 ปุ่มสเตตัส (pending, Order แล้ว, อัพสลิปแล้ว, credit, overdue, วงเงินเต็ม) + ปุ่มยกเลิก / แก้ไข
+            # 5 ปุ่มสเตตัส + ปุ่มแก้ไข/ลบ
             contents.append(BoxComponent(
                 layout='horizontal', spacing='xs', margin='sm',
                 contents=[
@@ -296,7 +289,6 @@ def generate_summary_carousel(order_date, orders):
             ))
             contents.append(SeparatorComponent(margin='md'))
 
-        # หน้าสุดท้าย: แสดงยอดรวมและเปอร์เซ็นต์ + ปุ่ม Apply ทั้งหมด (2.5)
         if is_last:
             summary_box = [
                 TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
@@ -308,7 +300,6 @@ def generate_summary_carousel(order_date, orders):
             contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
             contents.append(SeparatorComponent(margin='md'))
             
-            # ปุ่ม Apply ทุก Order ในวัน (Requirement 2.5)
             contents.append(BoxComponent(
                 layout='vertical', spacing='sm',
                 contents=[
@@ -318,9 +309,7 @@ def generate_summary_carousel(order_date, orders):
                 ]
             ))
 
-        # แสดงหมายเลขหน้า Carousel (เช่น 1/2)
         contents.append(TextComponent(text=f"หน้าที่ {idx+1}/{len(item_chunks)}", size='xxs', color='#aaaaaa', align='center', margin='md'))
-
         bubbles.append(BubbleContainer(body=BoxComponent(layout='vertical', contents=contents)))
 
     if len(bubbles) > 1:
