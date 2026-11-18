@@ -84,15 +84,25 @@ def fuzzy_match_product(query):
         return matches[:3], "suggestion"
     return None, "none"
 
+@app.route("/", methods=['GET'])
+def index():
+    return "Line Bot Server is running!"
+
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
     app.logger.info("Request body: " + body)
+    
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
+        app.logger.error("Invalid signature. Please check your channel secret.")
         abort(400)
+    except Exception as e:
+        app.logger.error(f"Error handling webhook: {e}")
+        abort(500)
+        
     return 'OK'
 
 @handler.add(MessageEvent, message=TextMessage)
@@ -215,7 +225,7 @@ def handle_summary_command(event, text):
     line_bot_api.reply_message(event.reply_token, flex_message)
 
 def handle_action_command(event, text):
-    """จัดการปุ่มกด Call to Action (เปลี่ยนสเตตัส / ลบ / อัพสลิปแล้วลบอัตโนมัติ) บน Supabase"""
+    """จัดการปุ่มกด Call to Action บน Supabase"""
     if supabase:
         try:
             if text.startswith("set_status_"):
@@ -224,10 +234,8 @@ def handle_action_command(event, text):
                 store_name = parts[3] if len(parts) > 3 else ""
                 
                 if status_key == "อัพสลิปแล้ว":
-                    # เปลี่ยนเป็นอัพสลิปแล้ว -> ลบออกจาก Supabase ทันทีตามเงื่อนไข
                     supabase.table("orders").delete().eq("store", store_name).execute()
                 else:
-                    # อัปเดตสเตตัสใน Supabase
                     supabase.table("orders").update({"status": status_key}).eq("store", store_name).execute()
                     
             elif text.startswith("ลบ"):
