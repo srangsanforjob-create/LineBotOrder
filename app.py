@@ -10,10 +10,10 @@ from linebot.models import (
 app = Flask(__name__)
 
 # ==========================================
-# CONFIGURATIONS (ดึงค่าจาก Environment Variables ของ Render แนะนำให้ตั้งค่าระบบ)
+# CONFIGURATIONS (ดึงค่าจาก Environment Variables ของ Render ตรงกับชื่อที่คุณตั้ง)
 # ==========================================
-CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN', 'YOUR_CHANNEL_ACCESS_TOKEN')
-CHANNEL_SECRET = os.getenv('CHANNEL_SECRET', 'YOUR_CHANNEL_SECRET')
+CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_CHANNEL_ACCESS_TOKEN')
+CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET', 'YOUR_CHANNEL_SECRET')
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
@@ -256,7 +256,7 @@ def create_guide_menu_flex():
     )
 
 # ==========================================
-# WEBHOOK & ROUTING (แก้ไขจุด 404 และ Signature)
+# WEBHOOK & ROUTING
 # ==========================================
 
 @app.route("/", methods=['GET'])
@@ -266,8 +266,6 @@ def home():
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers.get('X-Line-Signature', '')
-    
-    # ดึง Raw Body เป็น Bytes เพื่อให้ Signature ตรงกับที่ LINE ส่งมา
     body = request.get_data(as_text=False).decode('utf-8')
     
     try:
