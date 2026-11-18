@@ -456,93 +456,100 @@ def build_carousel(chat_id):
     }
 
 def process_webhook_event(event):
-    source = event.get("source", {})
-    chat_type = source.get("type", "user")
-    if chat_type == "group":
-        chat_id = source.get("groupId")
-    elif chat_type == "room":
-        chat_id = source.get("roomId")
-    else:
-        chat_id = source.get("userId", "user")
+    try:
+        source = event.get("source", {})
+        chat_type = source.get("type", "user")
+        if chat_type == "group":
+            chat_id = source.get("groupId")
+        elif chat_type == "room":
+            chat_id = source.get("roomId")
+        else:
+            chat_id = source.get("userId", "user")
 
-    reply_token = event.get("replyToken", "")
+        if not chat_id:
+            chat_id = "default_chat"
 
-    if event.get("type") == "postback":
-        data_str = event.get("postback", {}).get("data", "")
-        query_params = dict(qp.split("=", 1) for qp in data_str.split("&") if "=" in qp)
-        action = query_params.get("action")
+        reply_token = event.get("replyToken", "")
 
-        if action == "update_daily":
-            target_date = query_params.get("date")
-            new_status = query_params.get("status", "pending")
-            if target_date:
-                supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
-                send_reply(reply_token, [build_carousel(chat_id)])
+        if event.get("type") == "postback":
+            data_str = event.get("postback", {}).get("data", "")
+            query_params = dict(qp.split("=", 1) for qp in data_str.split("&") if "=" in qp)
+            action = query_params.get("action")
 
-        elif action == "delete_daily":
-            target_date = query_params.get("date")
-            if target_date:
-                supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
-                send_reply(reply_token, [build_carousel(chat_id)])
+            if action == "update_daily":
+                target_date = query_params.get("date")
+                new_status = query_params.get("status", "pending")
+                if target_date:
+                    supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
 
-        elif action == "update_order":
-            order_id = query_params.get("id")
-            new_status = query_params.get("status", "pending")
-            if order_id:
-                supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("id", order_id).execute()
-                send_reply(reply_token, [build_carousel(chat_id)])
+            elif action == "delete_daily":
+                target_date = query_params.get("date")
+                if target_date:
+                    supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
 
-        elif action == "delete_order":
-            order_id = query_params.get("id")
-            if order_id:
-                supabase.table("orders").delete().eq("chat_id", chat_id).eq("id", order_id).execute()
-                send_reply(reply_token, [build_carousel(chat_id)])
-        return
+            elif action == "update_order":
+                order_id = query_params.get("id")
+                new_status = query_params.get("status", "pending")
+                if order_id:
+                    supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("id", order_id).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
 
-    if event.get("type") == "message" and event["message"].get("type") == "text":
-        text = event["message"]["text"].strip()
-
-        if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
-            send_reply(reply_token, [{
-                "type": "text",
-                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [ชื่อร้าน] [สินค้า จำนวน] (หากไม่ใส่สถานะ ระบบจะตั้งเป็น 'ยังไม่ได้ Order' ให้อัตโนมัติ)\nตัวอย่าง: 19 แช่บยโส L1 R1\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
-            }])
+            elif action == "delete_order":
+                order_id = query_params.get("id")
+                if order_id:
+                    supabase.table("orders").delete().eq("chat_id", chat_id).eq("id", order_id).execute()
+                    send_reply(reply_token, [build_carousel(chat_id)])
             return
 
-        if text in ["สรุป", "รายงาน", "ออเดอร์", "ดูยอด"]:
-            send_reply(reply_token, [build_carousel(chat_id)])
-            return
+        if event.get("type") == "message" and event["message"].get("type") == "text":
+            text = event["message"]["text"].strip()
 
-        parsed_list = parse_order_text(text)
+            if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
+                send_reply(reply_token, [{
+                    "type": "text",
+                    "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [ชื่อร้าน] [สินค้า จำนวน] (หากไม่ใส่สถานะ ระบบจะตั้งเป็น 'ยังไม่ได้ Order' ให้อัตโนมัติ)\nตัวอย่าง: 19 แช่บยโส L1 R1\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+                }])
+                return
 
-        if not parsed_list:
-            send_reply(reply_token, [{
-                "type": "text",
-                "text": f"⚠️ รูปแบบไม่ถูกต้อง: ไม่พบรายการสินค้า หรือรูปแบบไม่สมบูรณ์ในบรรทัด: {text}"
-            }])
-            return
+            if text in ["สรุป", "รายงาน", "ออเดอร์", "ดูยอด"]:
+                send_reply(reply_token, [build_carousel(chat_id)])
+                return
 
-        inserted_count = 0
-        for entry in parsed_list:
-            shop = get_or_create_shop(entry["shop_name"])
-            if shop:
-                payload = {
-                    "chat_id": chat_id,
-                    "chat_type": chat_type,
-                    "shop_id": shop["id"],
-                    "ddate": entry["ddate"],
-                    "status": entry["status"]
-                }
-                
-                for k, v in entry["items"].items():
-                    if k in CODES or k.startswith("sup_"):
-                        payload[k] = v
+            parsed_list = parse_order_text(text)
 
-                supabase.table("orders").insert(payload).execute()
-                inserted_count += 1
+            if not parsed_list:
+                # ถ้าพิมพ์ข้อความทั่วไปที่ไม่ใช่ออเดอร์และไม่ใช่คำสั่ง ให้ส่งข้อความแจ้งเตือนเบาๆ กลับไปเพื่อให้รู้ว่าบอททำงานอยู่
+                send_reply(reply_token, [{
+                    "type": "text",
+                    "text": f"⚠️ รูปแบบไม่ถูกต้อง: พิมพ์คำว่า 'สรุป' เพื่อดูยอด หรือพิมพ์ออเดอร์ตามรูปแบบ เช่น '19 แช่บยโส L1'"
+                }])
+                return
 
-        if inserted_count > 0:
-            send_reply(reply_token, [build_carousel(chat_id)])
+            inserted_count = 0
+            for entry in parsed_list:
+                shop = get_or_create_shop(entry["shop_name"])
+                if shop:
+                    payload = {
+                        "chat_id": chat_id,
+                        "chat_type": chat_type,
+                        "shop_id": shop["id"],
+                        "ddate": entry["ddate"],
+                        "status": entry["status"]
+                    }
+                    
+                    for k, v in entry["items"].items():
+                        if k in CODES or k.startswith("sup_"):
+                            payload[k] = v
+
+                    supabase.table("orders").insert(payload).execute()
+                    inserted_count += 1
+
+            if inserted_count > 0:
+                send_reply(reply_token, [build_carousel(chat_id)])
+    except Exception as e:
+        print(f"❌ Error in process_webhook_event: {e}")
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -581,11 +588,12 @@ def send_reply(reply_token, messages):
         return
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}
     try:
-        requests.post(
+        res = requests.post(
             "https://api.line.me/v2/bot/message/reply",
             headers=headers,
             json={"replyToken": reply_token, "messages": messages}
         )
+        print(f"LINE Reply Status: {res.status_code}, Response: {res.text}")
     except Exception as e:
         print(f"Reply Error: {e}")
 
