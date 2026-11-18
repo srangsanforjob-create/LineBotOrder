@@ -109,7 +109,7 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # 3. Handle Order Input (พิมพ์สั่งออร์เดอร์ปกติ -> บันทึกลง Supabase ทันที)
+    # 3. Handle Order Input (พิมพ์สั่งออร์เดอร์ปกติ -> บันทึกลง Supabase แล้วส่ง Flex สรุปกลับทันที)
     lines = text.split("\n")
     success_count = 0
     error_messages = []
@@ -119,7 +119,6 @@ def handle_message(event):
         if not line:
             continue
         
-        # ตัดแบ่งแค่ช่องว่างแรก (ส่วนแรกเป็นวันที่ ส่วนที่เหลือคือชื่อร้านและรายการทั้งหมด)
         parts = line.split(" ", 1)
         if len(parts) >= 2:
             date_raw = parts[0]
@@ -150,10 +149,8 @@ def handle_message(event):
             error_messages.append(f"❌ รูปแบบไม่ถูกต้อง: '{line}'")
 
     if success_count > 0:
-        reply_text = f"✅ บันทึกออร์เดอร์สำเร็จทั้งหมด {success_count} รายการ"
-        if error_messages:
-            reply_text += "\n" + "\n".join(error_messages)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        # บันทึกสำเร็จแล้ว ส่ง Flex Message สรุปผลกลับมาทันทีโดยอัตโนมัติ
+        handle_summary_command(event, "สรุป")
     else:
         matched, match_type = fuzzy_match_product(text)
         if match_type == "suggestion":
@@ -227,7 +224,7 @@ def handle_action_command(event, text):
                 store_name = parts[3] if len(parts) > 3 else ""
                 
                 if status_key == "อัพสลิปแล้ว":
-                    # เปลี่ยนเป็นอัพสลิปแล้ว -> ลบออกจาก Supabase ทันที
+                    # เปลี่ยนเป็นอัพสลิปแล้ว -> ลบออกจาก Supabase ทันทีตามเงื่อนไข
                     supabase.table("orders").delete().eq("store", store_name).execute()
                 else:
                     # อัปเดตสเตตัสใน Supabase
