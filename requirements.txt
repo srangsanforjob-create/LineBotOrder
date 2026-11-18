@@ -1,6 +1,5 @@
-Flask
+flask
 line-bot-sdk
-supabase
-pytz
+gspread
+oauth2client
 gunicorn
-requests
