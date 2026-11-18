@@ -154,8 +154,8 @@ def handle_message(event):
                     contents=[
                         TextComponent(text="📊 วิธีการดูสรุป Order", weight='bold', size='md'),
                         SeparatorComponent(margin='md'),
-                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดของวันนี้\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ", wrap=True, size='sm', color='#555555'),
-                        ButtonComponent(style='primary', margin='md', action=MessageAction(label='👉 ดูสรุปวันนี้เลย', text='สรุป'))
+                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดทุกวันที่มีออเดอร์\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ\n• พิมพ์ 'สรุป [status]' เช่น 'สรุป pending' เพื่อกรองตามสเตตัส", wrap=True, size='sm', color='#555555'),
+                        ButtonComponent(style='primary', margin='md', action=MessageAction(label='👉 ดูสรุปทั้งหมดเลย', text='สรุป'))
                     ]
                 )
             )
@@ -204,21 +204,64 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="คู่มือรายการสินค้า", contents=carousel))
         return
 
-    # ── คำสั่งสรุปประจำวัน ──
+    # ── คำสั่งสรุปประจำวัน / สรุปตามวันที่ / สรุปตาม Status ──
     if text.startswith("สรุป"):
         parts = text.split()
-        target_date = parts[1] if len(parts) > 1 else datetime.now().strftime("%Y-%m-%d")
-        
-        res = supabase.table("orders").select("*").eq("order_date", target_date).execute()
-        orders = res.data
-        
-        if not orders:
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"📭 ไม่พบออเดอร์ในวันที่ {target_date}"))
-            return
+        if len(parts) > 1:
+            param = parts[1]
+            # ตรวจสอบว่าเป็นรูปแบบวันที่ (YYYY-MM-DD) หรือไม่
+            is_date = re.match(r'^\d{4}-\d{2}-\d{2}$', param)
             
-        flex_msg = generate_summary_carousel(target_date, orders)
-        line_bot_api.reply_message(event.reply_token, flex_msg)
-        return
+            if is_date:
+                target_date = param
+                res = supabase.table("orders").select("*").eq("order_date", target_date).execute()
+                orders = res.data
+                if not orders:
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"📭 ไม่พบออเดอร์ในวันที่ {target_date}"))
+                    return
+                flex_msg = generate_summary_carousel(target_date, orders)
+                line_bot_api.reply_message(event.reply_token, flex_msg)
+                return
+            else:
+                # กรณีระบุเป็น Status เช่น "สรุป pending", "สรุป credit"
+                status_query = " ".join(parts[1:])
+                res = supabase.table("orders").select("*").ilike("status", f"%{status_query}%").execute()
+                orders = res.data
+                if not orders:
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text=f"📭 ไม่พบออเดอร์ที่มีสถานะ '{status_query}'"))
+                    return
+                flex_msg = generate_status_summary_carousel(status_query, orders)
+                line_bot_api.reply_message(event.reply_token, flex_msg)
+                return
+        else:
+            # กรณีพิมพ์แค่ "สรุป" -> ดึงทุกวันที่มียอดออเดอร์มาแสดงแบบ Carousel แยกตามวัน
+            res = supabase.table("orders").select("*").execute()
+            orders = res.data
+            if not orders:
+                line_bot_api.reply_message(event.reply_token, TextMessage(text="📭 ไม่พบข้อมูลออเดอร์ใดๆ ในระบบ"))
+                return
+            
+            # จัดกลุ่มออเดอร์ตาม order_date
+            dates_dict = {}
+            for item in orders:
+                d = item['order_date']
+                if d not in dates_dict:
+                    dates_dict[d] = []
+                dates_dict[d].append(item)
+            
+            sorted_dates = sorted(dates_dict.keys())
+            bubbles = []
+            for d in sorted_dates:
+                bubble_content = generate_single_day_bubble(d, dates_dict[d])
+                bubbles.append(bubble_content)
+            
+            if len(bubbles) > 1:
+                flex_msg = FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมด', contents=CarouselContainer(contents=bubbles))
+            else:
+                flex_msg = FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมด', contents=bubbles[0])
+                
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+            return
 
     # ── ดักจับปุ่ม Action / แก้ไขต่างๆ ──
     if text.startswith("action_") or text.startswith("edit_") or text.startswith("setqty_") or text.startswith("quickadd_") or text.startswith("editshop_"):
@@ -452,7 +495,6 @@ def handle_action_command(event, text):
             if info["category"] == cat_key:
                 prod_buttons.append(ButtonComponent(style='link', action=MessageAction(label=f"{sku}: {info['name']}", text=f"action_setprod_{record_id}_{sku}")))
         
-        # 📌 แสดงผลปุ่มเลือกสินค้าทั้งหมดแบบไม่ตัดทอน (รองรับโซจูครบ 5 รสชาติ)
         flex_msg = FlexSendMessage(
             alt_text="เลือกสินค้า",
             contents=BubbleContainer(
@@ -515,11 +557,8 @@ def handle_action_command(event, text):
             supabase.table("orders").delete().eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
 
-def generate_summary_carousel(order_date, orders):
-    bubbles = []
+def generate_single_day_bubble(order_date, orders):
     total_qty = sum(item["qty"] for item in orders)
-    
-    # จัดกลุ่มสินค้าตามชื่อร้านค้า (Group by shop_name)
     shops_dict = {}
     for item in orders:
         s_name = item['shop_name']
@@ -527,14 +566,124 @@ def generate_summary_carousel(order_date, orders):
             shops_dict[s_name] = []
         shops_dict[s_name].append(item)
     
-    shops_list = list(shops_dict.items())
+    contents = [
+        BoxComponent(
+            layout='vertical',
+            contents=[
+                TextComponent(text=f"📅 วันที่ {order_date}", weight='bold', size='xl', color='#000000')
+            ]
+        ),
+        SeparatorComponent(margin='md')
+    ]
     
-    # แบ่งกลุ่มร้านค้าไม่เกิน 3 ร้านต่อ 1 Bubble
+    for shop_name, shop_items in shops_dict.items():
+        shop_status = shop_items[0]['status'] if shop_items else 'pending'
+        first_item_id = shop_items[0]['id'] if shop_items else ''
+        
+        shop_contents = [
+            BoxComponent(
+                layout='horizontal',
+                contents=[
+                    TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
+                    TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
+                    ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
+                ]
+            ),
+            SeparatorComponent(margin='xs')
+        ]
+        
+        for item in shop_items:
+            shop_contents.append(
+                BoxComponent(
+                    layout='horizontal',
+                    margin='xs',
+                    contents=[
+                        TextComponent(text=f"• {item['product_code']} ({item['product_name']})", size='xs', color='#333333', flex=4, wrap=True),
+                        TextComponent(text=f"{item['qty']} ชิ้น", size='xs', color='#666666', align='end', flex=2)
+                    ]
+                )
+            )
+        
+        shop_contents.append(SeparatorComponent(margin='sm'))
+        shop_contents.append(
+            BoxComponent(
+                layout='vertical',
+                spacing='xs',
+                contents=[
+                    BoxComponent(
+                        layout='horizontal', spacing='xs',
+                        contents=[
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='pending', text=f"action_status_{first_item_id}_pending")),
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='Orderแล้ว', text=f"action_status_{first_item_id}_Order แล้ว")),
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='อัพสลิป', text=f"action_status_{first_item_id}_อัพสลิปแล้ว"))
+                        ]
+                    ),
+                    BoxComponent(
+                        layout='horizontal', spacing='xs',
+                        contents=[
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='credit', text=f"action_status_{first_item_id}_credit")),
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='overdue', text=f"action_status_{first_item_id}_overdue")),
+                            ButtonComponent(style='secondary', height='sm', action=MessageAction(label='วงเงินเต็ม', text=f"action_status_{first_item_id}_วงเงินเต็ม"))
+                        ]
+                    )
+                ]
+            )
+        )
+
+        contents.append(
+            BoxComponent(
+                layout='vertical',
+                margin='md',
+                spacing='sm',
+                contents=shop_contents
+            )
+        )
+        contents.append(SeparatorComponent(margin='md'))
+
+    summary_box = [
+        TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
+    ]
+    for item in orders:
+        pct = (item["qty"] / total_qty * 100) if total_qty > 0 else 0
+        summary_box.append(TextComponent(text=f"  • {item['product_code']} : {item['qty']} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
+    
+    contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
+    contents.append(SeparatorComponent(margin='md'))
+    
+    contents.append(BoxComponent(
+        layout='vertical', spacing='sm',
+        contents=[
+            ButtonComponent(style='primary', color='#1DB446', height='sm', action=MessageAction(label='🟢 Orderแล้วทั้งหมด', text=f"action_bulk_ordered_{order_date}")),
+            ButtonComponent(style='primary', color='#3b82f6', height='sm', action=MessageAction(label='🔵 อัพสลิปแล้วทั้งหมด', text=f"action_bulk_uploaded_{order_date}")),
+            ButtonComponent(style='primary', color='#FF5555', height='sm', action=MessageAction(label='🔴 ลบทั้งหมด', text=f"action_bulk_delete_{order_date}"))
+        ]
+    ))
+    
+    return BubbleContainer(body=BoxComponent(layout='vertical', contents=contents))
+
+def generate_summary_carousel(order_date, orders):
+    bubble = generate_single_day_bubble(order_date, orders)
+    return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=bubble)
+
+def generate_status_summary_carousel(status_name, orders):
+    # จัดกลุ่มตามสถานะ โดยในแต่ละร้านจะแสดงวันที่กำกับไว้
+    total_qty = sum(item["qty"] for item in orders)
+    
+    # จัดกลุ่มตามร้านค้า แต่ละร้านเก็บรายการสินค้าและวันที่
+    shops_dict = {}
+    for item in orders:
+        key = (item['shop_name'], item['order_date'])
+        if key not in shops_dict:
+            shops_dict[key] = []
+        shops_dict[key].append(item)
+    
+    shops_list = list(shops_dict.items())
     chunk_size = 3
     shop_chunks = [shops_list[i:i + chunk_size] for i in range(0, len(shops_list), chunk_size)]
     if not shop_chunks:
         shop_chunks = [[]]
         
+    bubbles = []
     for idx, chunk in enumerate(shop_chunks):
         is_last = (idx == len(shop_chunks) - 1)
         
@@ -542,30 +691,35 @@ def generate_summary_carousel(order_date, orders):
             BoxComponent(
                 layout='vertical',
                 contents=[
-                    TextComponent(text=f"📅 วันที่ {order_date}", weight='bold', size='xl', color='#000000')
+                    TextComponent(text=f"📌 สรุปรายการสถานะ: {status_name}", weight='bold', size='lg', color='#1DB446')
                 ]
             ),
             SeparatorComponent(margin='md')
         ]
         
-        for shop_name, shop_items in chunk:
-            shop_status = shop_items[0]['status'] if shop_items else 'pending'
+        for (shop_name, order_date), shop_items in chunk:
+            shop_status = shop_items[0]['status'] if shop_items else status_name
             first_item_id = shop_items[0]['id'] if shop_items else ''
             
-            # 📌 ส่วนหัวข้อร้าน + สถานะ + ปุ่ม [✏️จัดการ] อยู่บรรทัดเดียวกัน
             shop_contents = [
                 BoxComponent(
-                    layout='horizontal',
+                    layout='vertical',
+                    spacing='xs',
                     contents=[
-                        TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
-                        TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
-                        ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
+                        TextComponent(text=f"📅 วันที่: {order_date}", size='xs', color='#888888', weight='bold'),
+                        BoxComponent(
+                            layout='horizontal',
+                            contents=[
+                                TextComponent(text=f"🛒 {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
+                                TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='center', flex=2, weight='bold'),
+                                ButtonComponent(style='link', height='sm', action=MessageAction(label='✏️จัดการ', text=f"editshop_{shop_name}_{order_date}"), flex=2)
+                            ]
+                        )
                     ]
                 ),
                 SeparatorComponent(margin='xs')
             ]
             
-            # 📌 รายการสินค้าในร้าน (เรียงต่อกันเป็น List)
             for item in shop_items:
                 shop_contents.append(
                     BoxComponent(
@@ -579,8 +733,6 @@ def generate_summary_carousel(order_date, orders):
                 )
             
             shop_contents.append(SeparatorComponent(margin='sm'))
-            
-            # 📌 ชุดปุ่มสถานะ 6 ปุ่ม (แสดงเพียงชุดเดียวต่อ 1 ร้าน)
             shop_contents.append(
                 BoxComponent(
                     layout='vertical',
@@ -606,7 +758,6 @@ def generate_summary_carousel(order_date, orders):
                 )
             )
 
-            # นำ Box ของร้านนี้ไปใส่ในเนื้อหาหลักของ Bubble
             contents.append(
                 BoxComponent(
                     layout='vertical',
@@ -621,29 +772,15 @@ def generate_summary_carousel(order_date, orders):
             summary_box = [
                 TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
             ]
-            for item in orders:
-                pct = (item["qty"] / total_qty * 100) if total_qty > 0 else 0
-                summary_box.append(TextComponent(text=f"  • {item['product_code']} : {item['qty']} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
-            
             contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
-            contents.append(SeparatorComponent(margin='md'))
-            
-            contents.append(BoxComponent(
-                layout='vertical', spacing='sm',
-                contents=[
-                    ButtonComponent(style='primary', color='#1DB446', height='sm', action=MessageAction(label='🟢 Orderแล้วทั้งหมด', text=f"action_bulk_ordered_{order_date}")),
-                    ButtonComponent(style='primary', color='#3b82f6', height='sm', action=MessageAction(label='🔵 อัพสลิปแล้วทั้งหมด', text=f"action_bulk_uploaded_{order_date}")),
-                    ButtonComponent(style='primary', color='#FF5555', height='sm', action=MessageAction(label='🔴 ลบทั้งหมด', text=f"action_bulk_delete_{order_date}"))
-                ]
-            ))
 
         contents.append(TextComponent(text=f"หน้าที่ {idx+1}/{len(shop_chunks)}", size='xxs', color='#aaaaaa', align='center', margin='md'))
         bubbles.append(BubbleContainer(body=BoxComponent(layout='vertical', contents=contents)))
 
     if len(bubbles) > 1:
-        return FlexSendMessage(alt_text='สรุปยอด Order ประจำวัน', contents=CarouselContainer(contents=bubbles))
+        return FlexSendMessage(alt_text=f'สรุปยอดสถานะ {status_name}', contents=CarouselContainer(contents=bubbles))
     else:
-        return FlexSendMessage(alt_text='สรุปยอด Order ประจำวัน', contents=bubbles[0])
+        return FlexSendMessage(alt_text=f'สรุปยอดสถานะ {status_name}', contents=bubbles[0])
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
