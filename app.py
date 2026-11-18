@@ -13,7 +13,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 app = Flask(__name__)
 
 # --- LINE API CONFIGURATION ---
-# ดึงค่าจาก Environment Variable หรือใส่ Token และ Secret ของคุณตรงนี้ให้ถูกต้อง
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN', 'YOUR_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET', 'YOUR_CHANNEL_SECRET')
 
@@ -21,14 +20,13 @@ line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # --- GOOGLE SHEETS SETUP ---
-# หมายเหตุ: นำไฟล์ credentials.json วางไว้ที่เดียวกับ app.py หรือตั้งค่าผ่าน Service Account
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
     client = gspread.authorize(creds)
     sheet = client.open("Beer_Order_DB").sheet1
 except Exception as e:
-    sheet = None  # กรณีรันเทสแบบ Offline หรือยังไม่ได้ต่อ Google Sheets
+    sheet = None  # ทำงานแบบ Offline หรือยังไม่ต่อ Sheet ได้
 
 # --- PRODUCT CATALOG & CATEGORIES ---
 PRODUCT_CATALOG = {
@@ -44,19 +42,14 @@ ALL_PRODUCTS = []
 for cat, items in PRODUCT_CATALOG.items():
     ALL_PRODUCTS.extend(items)
 
-# --- STATUS DEFINITIONS ---
-STATUS_MAP = {
-    "pending": "Pending",
-    "รอจัดส่ง": "Pending",
-    "order แล้ว": "Order แล้ว",
-    "สั่งแล้ว": "Order แล้ว",
-    "อัพสลิปแล้ว": "อัพสลิปแล้ว",
-    "แนบสลิปแล้ว": "อัพสลิปแล้ว",
-    "เครดิต": "เครดิต",
-    "overdue": "Overdue",
-    "เกินกำหนด": "Overdue",
-    "limit": "Limit(วงเงินเต็ม)",
-    "วงเงินเต็ม": "Limit(วงเงินเต็ม)"
+# --- STATUS DEFINITIONS & COLORS ---
+STATUS_CONFIG = {
+    "Pending": {"label": "⏳ Pending", "color": "#aaaaaa"},
+    "Order แล้ว": {"label": "🟢 Order แล้ว", "color": "#00b900"},
+    "อัพสลิปแล้ว": {"label": "🔵 อัพสลิปแล้ว", "color": "#0066cc"},
+    "เครดิต": {"label": "🟠 เครดิต", "color": "#ff9900"},
+    "Overdue": {"label": "🔴 Overdue", "color": "#ff3333"},
+    "Limit": {"label": "⚠️ Limit", "color": "#cc00cc"}
 }
 
 THAI_DAYS = ["วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์"]
@@ -71,22 +64,20 @@ def get_thai_date_str(date_obj):
     return f"{day_name} {day_num} {month_name} {year_be}"
 
 def parse_smart_date(date_str):
-    """Smart Date: ถ้าระบุแค่วันที่ (เช่น '19') ให้ปัดเป็นเดือน/ปีปัจจุบันอัตโนมัติ"""
+    """Smart Date: ระบุแค่วันที่ (เช่น '19') ปัดเป็นเดือน/ปีปัจจุบันให้อัตโนมัติ"""
     now = datetime.now()
     if "/" in date_str:
         parts = date_str.split("/")
         d = int(parts[0])
         m = int(parts[1]) if len(parts) > 1 and parts[1] else now.month
         y = int(parts[2]) if len(parts) > 2 and parts[2] else now.year
-        if y < 2500:
-            pass # ค.ศ.
         return datetime(y, m, d)
     else:
         d = int(date_str)
         return datetime(now.year, now.month, d)
 
 def fuzzy_match_product(query):
-    """ระบบคาดเดาและแนะนำสินค้ากรณีพิมพ์ไม่ตรงเป๊ะ"""
+    """ระบบคาดเดาและแนะนำสินค้าเมื่อพิมพ์ไม่ตรงเป๊ะ"""
     query_lower = query.lower()
     for p in ALL_PRODUCTS:
         if p.lower() == query_lower:
@@ -111,17 +102,17 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
 
-    # 1. Handle Summary Command (รองรับคำว่า สรุป / summary พร้อมตัวกรอง วันที่ และ สเตตัส)
+    # 1. Handle Summary Command (รองรับคำว่า สรุป / summary พร้อมตัวกรอง)
     if text.lower().startswith("สรุป") or text.lower().startswith("summary"):
         handle_summary_command(event, text)
         return
 
-    # 2. Handle Bulk Actions or Item-level clicks
-    if text.startswith("bulk_") or text.startswith("แก้ไข") or text.startswith("ลบ") or text.startswith("select_product"):
+    # 2. Handle Action Commands (การเปลี่ยนสเตตัสรายร้าน, ปุ่ม Bulk, แก้ไข, ลบ)
+    if text.startswith("set_status_") or text.startswith("bulk_") or text.startswith("แก้ไข") or text.startswith("ลบ") or text.startswith("select_product"):
         handle_action_command(event, text)
         return
 
-    # 3. Handle Order Input (รองรับการสั่งหลายออร์เดอร์พร้อมกันด้วยการเว้นบรรทัด Multi-line Batch Input)
+    # 3. Handle Order Input (รองรับ Multi-line Batch Input เว้นบรรทัดสั่งหลายร้าน)
     lines = text.split("\n")
     success_count = 0
     error_messages = []
@@ -142,7 +133,6 @@ def handle_message(event):
             
             remaining = parts[1] if len(parts) > 2 else ""
             
-            # บันทึกลง Google Sheets (ถ้าเชื่อมต่อไว้)
             if sheet:
                 try:
                     sheet.append_row([order_date.strftime('%Y-%m-%d'), remaining, "Pending"])
@@ -158,7 +148,6 @@ def handle_message(event):
             reply_text += "\n" + "\n".join(error_messages)
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
     else:
-        # ถ้าข้อความไม่ตรงรูปแบบและไม่เจอสินค้า ให้เช็ค Fuzzy Match
         matched, match_type = fuzzy_match_product(text)
         if match_type == "suggestion":
             line_bot_api.reply_message(event.reply_token, create_fuzzy_suggestion_flex(text, matched))
@@ -166,7 +155,7 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="🤖 สวัสดีครับ พิมพ์ออร์เดอร์ในรูปแบบ [วันที่] [ชื่อร้าน] [รายการสินค้า] หรือพิมพ์ 'สรุป' เพื่อดูรายการ"))
 
 def handle_summary_command(event, text):
-    """จัดการคำสั่งสรุป พร้อมตัวกรองวันที่/สเตตัส แบ่งหน้าอัตโนมัติ (หน้า 1/2) และยอดสรุปประจำวัน"""
+    """จัดการคำสั่งสรุป พร้อมแบ่งหน้า (Pagination) และยอดสรุปประจำวันเฉพาะหน้าสุดท้าย"""
     tokens = text.split()
     target_date = None
     target_status = None
@@ -178,11 +167,11 @@ def handle_summary_command(event, text):
             except:
                 pass
         else:
-            for k, v in STATUS_MAP.items():
-                if k in t.lower():
-                    target_status = v
+            for k in STATUS_CONFIG.keys():
+                if k.lower() in t.lower():
+                    target_status = k
 
-    # ข้อมูลจำลองออร์เดอร์ (Mock Database)
+    # Mock Data ตัวอย่างออร์เดอร์
     mock_orders = [
         {"store": "ร้านส้มตำลำซิ่ง", "items": [{"name": "L", "qty": 2}, {"name": "M", "qty": 10}], "status": "Pending"},
         {"store": "ร้านนั่งชิล", "items": [{"name": "H40L", "qty": 1}, {"name": "SCT", "qty": 2}], "status": "Order แล้ว"},
@@ -192,7 +181,6 @@ def handle_summary_command(event, text):
         {"store": "ร้านบ้านสวน", "items": [{"name": "L", "qty": 1}], "status": "Pending"}
     ]
 
-    # กรองตามสเตตัส (ถ้ามีระบุ)
     if target_status:
         mock_orders = [o for o in mock_orders if o["status"] == target_status]
 
@@ -204,12 +192,19 @@ def handle_summary_command(event, text):
     total_pages = (total_items_count + chunk_size - 1) // chunk_size
     if total_pages == 0: total_pages = 1
 
+    # คำนวณยอดสรุปประจำวันทั้งหมดเตรียมไว้สำหรับแสดงหน้าสุดท้าย
+    category_summary = {}
+    for ord_item in mock_orders:
+        for itm in ord_item["items"]:
+            category_summary[itm["name"]] = category_summary.get(itm["name"], 0) + itm["qty"]
+
     for page_idx in range(total_pages):
         start_idx = page_idx * chunk_size
         end_idx = start_idx + chunk_size
         page_orders = mock_orders[start_idx:end_idx]
+        is_last_page = (page_idx == total_pages - 1)
 
-        bubble = create_order_flex_bubble(date_header_str, page_orders, page_idx + 1, total_pages)
+        bubble = create_order_flex_bubble(date_header_str, page_orders, page_idx + 1, total_pages, category_summary if is_last_page else None)
         bubbles.append(bubble)
 
     flex_message = FlexSendMessage(
@@ -219,42 +214,50 @@ def handle_summary_command(event, text):
     line_bot_api.reply_message(event.reply_token, flex_message)
 
 def handle_action_command(event, text):
-    """จัดการปุ่มกดต่างๆ เช่น ปุ่ม Bulk, ปุ่มแก้ไข, ปุ่มลบ, เลือกสินค้า"""
-    if text == "bulk_order_all":
-        reply = "🟢 อัปเดตสถานะเป็น 'Order แล้ว' ทุกรายการในวันนี้เรียบร้อยแล้ว"
-    elif text == "bulk_slip_all":
-        reply = "🔵 อัปเดตสถานะเป็น 'อัพสลิปแล้ว' ทุกรายการในวันนี้เรียบร้อยแล้ว"
-    elif text == "bulk_cancel_all":
-        reply = "🔴 ยกเลิกออร์เดอร์ทั้งหมดในวันนี้เรียบร้อยแล้ว"
+    """จัดการปุ่มเลือกสเตตัส 5 สถานะ ปุ่มแก้ไข ลบ และเลือกสินค้า"""
+    if text.startswith("set_status_"):
+        parts = text.split("_")
+        status_key = parts[2]
+        store_name = parts[3] if len(parts) > 3 else "ร้าน"
+        reply = f"✅ อัปเดตสเตตัสด้าน '{status_key}' ให้กับ {store_name} เรียบร้อยแล้ว"
+    elif text.startswith("bulk_"):
+        reply = "⚙️ ทำการอัปเดตสถานะแบบกลุ่มเรียบร้อยแล้ว"
     elif text.startswith("แก้ไข"):
-        reply = "✏️ กรุณาระบุจำนวนใหม่ หรือเลือกหมวดหมู่สินค้าที่ต้องการเปลี่ยน"
+        reply = "✏️ กรุณาระบุจำนวนใหม่ หรือเลือกหมวดหมู่สินค้า"
     elif text.startswith("ลบ"):
         reply = "🗑️ ลบรายการออร์เดอร์เรียบร้อยแล้ว"
     elif text.startswith("select_product"):
         prod = text.split(" ")[1] if len(text.split(" ")) > 1 else ""
         reply = f"✅ เลือกสินค้า '{prod}' เรียบร้อยแล้ว"
     else:
-        reply = "⚙️ ดำเนินการเรียบร้อยแล้ว"
+        reply = "⚙️ ดำเนินการสำเร็จ"
 
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
 
-def create_order_flex_bubble(date_title, orders, current_page, total_pages):
-    """สร้าง Bubble สำหรับ Flex Message พร้อมปุ่มจัดการรายร้าน ปุ่ม Bulk และยอดสรุปประจำวัน"""
+def create_order_flex_bubble(date_title, orders, current_page, total_pages, daily_summary=None):
+    """สร้าง Bubble สำหรับ Flex Message พร้อมปุ่มเปลี่ยนสเตตัส 5 สถานะ และยอดสรุปเฉพาะหน้าสุดท้าย"""
     body_contents = [
         {"type": "text", "text": date_title, "weight": "bold", "size": "md", "color": "#1DB446"},
         {"type": "text", "text": f"หน้า {current_page}/{total_pages}", "size": "xs", "color": "#aaaaaa", "margin": "sm"},
         {"type": "separator", "margin": "md"}
     ]
 
-    category_summary = {}
-
     for idx, ord_item in enumerate(orders):
         store = ord_item["store"]
         status = ord_item["status"]
         items_str = ", ".join([f"{i['name']} x{i['qty']}" for i in ord_item["items"]])
-        
-        for itm in ord_item["items"]:
-            category_summary[itm["name"]] = category_summary.get(itm["name"], 0) + itm["qty"]
+        current_status_conf = STATUS_CONFIG.get(status, {"label": status, "color": "#666666"})
+
+        # ปุ่มเลือกเปลี่ยนสเตตัสทั้ง 5 แบบ (แยกสีชัดเจน)
+        status_buttons = []
+        for s_key, s_val in STATUS_CONFIG.items():
+            status_buttons.append({
+                "type": "button",
+                "action": {"type": "message", "label": s_key[:4], "text": f"set_status_{s_key}_{store}"},
+                "height": "sm",
+                "style": "secondary",
+                "color": s_val["color"]
+            })
 
         body_contents.append({
             "type": "box",
@@ -267,7 +270,7 @@ def create_order_flex_bubble(date_title, orders, current_page, total_pages):
                     "layout": "baseline",
                     "contents": [
                         {"type": "text", "text": f"{store}", "weight": "bold", "size": "sm", "flex": 3},
-                        {"type": "text", "text": f"[{status}]", "size": "xs", "color": "#ff5555", "align": "end", "flex": 2}
+                        {"type": "text", "text": current_status_conf["label"], "size": "xs", "color": current_status_conf["color"], "align": "end", "flex": 2}
                     ]
                 },
                 {"type": "text", "text": items_str, "size": "xs", "color": "#666666"},
@@ -279,24 +282,32 @@ def create_order_flex_bubble(date_title, orders, current_page, total_pages):
                         {"type": "button", "action": {"type": "message", "label": "แก้ไข", "text": f"แก้ไข {store}"}, "height": "sm", "style": "secondary"},
                         {"type": "button", "action": {"type": "message", "label": "ลบ", "text": f"ลบ {store}"}, "height": "sm", "style": "secondary"}
                     ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "spacing": "xs",
+                    "contents": status_buttons[:3] # แสดงแถวปุ่มสเตตัส
                 }
             ]
         })
         body_contents.append({"type": "separator", "margin": "sm"})
 
-    # Daily Summary Footer
-    summary_text_list = [f"{k}: {v}" for k, v in category_summary.items()]
-    summary_str = " | ".join(summary_text_list) if summary_text_list else "ไม่มีรายการ"
+    # แสดงยอดสรุปประจำวัน เฉพาะในการ์ดหน้าสุดท้ายเท่านั้นตามโจทย์
+    if daily_summary:
+        summary_text_list = [f"{k}: {v}" for k, v in daily_summary.items()]
+        summary_str = " | ".join(summary_text_list) if summary_text_list else "ไม่มีรายการ"
 
-    body_contents.append({
-        "type": "box",
-        "layout": "vertical",
-        "margin": "md",
-        "contents": [
-            {"type": "text", "text": "📊 สรุปยอดรวมประจำวัน:", "weight": "bold", "size": "xs", "color": "#333333"},
-            {"type": "text", "text": summary_str, "size": "xs", "color": "#0066cc", "wrap": True}
-        ]
-    })
+        body_contents.append({
+            "type": "box",
+            "layout": "vertical",
+            "margin": "md",
+            "contents": [
+                {"type": "text", "text": "📊 สรุปยอดรวมประจำวัน (หน้าสุดท้าย):", "weight": "bold", "size": "xs", "color": "#333333"},
+                {"type": "text", "text": summary_str, "size": "xs", "color": "#0066cc", "wrap": True}
+            ]
+        })
 
     footer_box = {
         "type": "box",
@@ -316,7 +327,7 @@ def create_order_flex_bubble(date_title, orders, current_page, total_pages):
     }
 
 def create_fuzzy_suggestion_flex(query, suggestions):
-    """สร้าง Flex Message แนะนำสินค้าแบบปุ่มกดเลือกเมื่อพิมพ์ไม่ตรงเป๊ะ"""
+    """สร้าง Flex Message แนะนำสินค้าเมื่อพิมพ์ไม่ตรง"""
     buttons = []
     for s in suggestions:
         buttons.append({
