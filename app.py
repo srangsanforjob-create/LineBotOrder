@@ -26,7 +26,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม
+# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบทุกรสชาติ)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -72,7 +72,7 @@ PRODUCT_MAP = {
     "A6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
     "MHD": {"name": "ตัวหนีบเมนู / Menu Holder", "category": "posm"},
     
-    # OtherALC
+    # OtherALC (รวม Soju ครบทุกรสชาติ)
     "GALF": {"name": "Galaxy แบน 350ml", "category": "OtherALC"},
     "GALR": {"name": "Galaxy กลม 700ml", "category": "OtherALC"},
     "TEND3": {"name": "Tendo 360ml", "category": "OtherALC"},
@@ -194,7 +194,7 @@ def handle_message(event):
                 contents=[
                     TextComponent(text="🏷️ คู่มือสินค้า (3/3) - OtherALC & Bottle", weight='bold', size='sm', color='#1DB446'),
                     SeparatorComponent(margin='md'),
-                    TextComponent(text="• OtherALC (เครื่องดื่มอื่นๆ):\n  GALF : Galaxy แบน 350ml | GALR : Galaxy กลม 700ml\n  TEND3 : Tendo 360ml | TEND7 : Tendo 700ml\n  KACH : Kacha 375ml | SOJY/SOJP/SOJG/SOJF/SOJS (Soju)\n• Bottle/Cans Beer:\n  LB : CARABAO LAGER bottle 620ml\n  DB : CARABAO DUNKEL bottle 620ml\n  LC : CARABAO LAGER can 490ml | DC : DUNKEL can\n  WC : WEIZEN can | RC : ROSE can | IPAC : IPA can\n  PTYB : PATTAYA/PHUKET 320ml | PTYC : 490ml", wrap=True, size='xs', color='#333333'),
+                    TextComponent(text="• OtherALC (เครื่องดื่ม/Soju):\n  GALF/GALR (Galaxy) | TEND3/TEND7 (Tendo) | KACH (Kacha)\n  SOJY (โยเกิร์ต) | SOJP (พีช) | SOJG (องุ่น) | SOJF (เกรปฟรุ๊ต) | SOJS (สตรอเบอรี่)\n• Bottle/Cans Beer:\n  LB/DB (Bottle) | LC/DC/WC/RC/IPAC/PTYB/PTYC (Cans)", wrap=True, size='xs', color='#333333'),
                     SeparatorComponent(margin='md'),
                     ButtonComponent(style='secondary', action=MessageAction(label='⬅️ กลับหน้า 1', text='คู่มือ สินค้า 1'))
                 ]
@@ -402,7 +402,7 @@ def handle_action_command(event, text):
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🧊 Amenity / CO2', text=f"action_pickcat_{record_id}_amenity")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🛠️ Install', text=f"action_pickcat_{record_id}_install")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='📋 POSM', text=f"action_pickcat_{record_id}_posm")),
-                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍾 OtherALC', text=f"action_pickcat_{record_id}_OtherALC")),
+                        ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍾 OtherALC (รวม Soju)', text=f"action_pickcat_{record_id}_OtherALC")),
                         ButtonComponent(style='secondary', margin='sm', action=MessageAction(label='🍻 Bottle/Cans Beer', text=f"action_pickcat_{record_id}_Bottle/Cans"))
                     ]
                 )
@@ -424,7 +424,7 @@ def handle_action_command(event, text):
             contents=BubbleContainer(
                 body=BoxComponent(
                     layout='vertical',
-                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons[:10]
+                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons[:12]
                 )
             )
         )
@@ -495,7 +495,7 @@ def generate_summary_carousel(order_date, orders):
     
     shops_list = list(shops_dict.items())
     
-    # แบ่งกลุ่มร้านค้าไม่เกิน 3 ร้านต่อ 1 Bubble (เพื่อให้ขนาดกำลังดี ไม่ล้นหน้าจอ LINE)
+    # แบ่งกลุ่มร้านค้าไม่เกิน 3 ร้านต่อ 1 Bubble
     chunk_size = 3
     shop_chunks = [shops_list[i:i + chunk_size] for i in range(0, len(shops_list), chunk_size)]
     if not shop_chunks:
@@ -515,25 +515,23 @@ def generate_summary_carousel(order_date, orders):
         ]
         
         for shop_name, shop_items in chunk:
-            # ดึงสถานะของรายการแรกในร้านมาแสดงที่ขวาสุดของชื่อร้าน (หรือแสดงตามตกลง)
             shop_status = shop_items[0]['status'] if shop_items else 'pending'
             
-            # หัวข้อร้าน + สถานะอยู่ขวาสุด
-            contents.append(
+            # 📌 รวมร้านและรายการสินค้าทั้งหมดให้อยู่ใน Box เดียวกันอย่างแท้จริง
+            shop_contents = [
                 BoxComponent(
                     layout='horizontal',
-                    margin='md',
                     contents=[
                         TextComponent(text=f"🛒 ร้าน: {shop_name}", weight='bold', size='sm', color='#1DB446', flex=3),
                         TextComponent(text=f"[{shop_status}]", size='xs', color='#ff8c00', align='end', flex=2, weight='bold')
                     ]
-                )
-            )
-            contents.append(SeparatorComponent(margin='xs'))
+                ),
+                SeparatorComponent(margin='xs')
+            ]
             
-            # รายการสินค้าในร้าน
+            # วนลูปเพิ่มรายการสินค้าแต่ละตัวต่อลงไปใน Box ของร้านเดียวกัน
             for item in shop_items:
-                contents.append(
+                shop_contents.append(
                     BoxComponent(
                         layout='vertical',
                         margin='sm',
@@ -546,7 +544,6 @@ def generate_summary_carousel(order_date, orders):
                                     TextComponent(text=f"{item['qty']} ชิ้น", size='xs', color='#666666', align='end', flex=2)
                                 ]
                             ),
-                            # ปุ่มสถานะ 6 ปุ่ม + แก้ไข / ลบ (ต่อท้ายแต่ละรายการสินค้า)
                             BoxComponent(
                                 layout='horizontal', spacing='xs', margin='xs',
                                 contents=[
@@ -573,7 +570,18 @@ def generate_summary_carousel(order_date, orders):
                         ]
                     )
                 )
-                contents.append(SeparatorComponent(margin='sm'))
+                shop_contents.append(SeparatorComponent(margin='sm'))
+
+            # นำ Box ของร้านนี้ไปใส่ในเนื้อหาหลักของ Bubble
+            contents.append(
+                BoxComponent(
+                    layout='vertical',
+                    margin='md',
+                    spacing='sm',
+                    contents=shop_contents
+                )
+            )
+            contents.append(SeparatorComponent(margin='md'))
 
         if is_last:
             summary_box = [
