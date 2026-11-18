@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -9,10 +10,13 @@ from linebot.models import (
 app = Flask(__name__)
 
 # ==========================================
-# CONFIGURATIONS (ใส่ Channel Access Token และ Secret ของคุณ)
+# CONFIGURATIONS (ดึงค่าจาก Environment Variables ของ Render แนะนำให้ตั้งค่าระบบ)
 # ==========================================
-line_bot_api = LineBotApi('YOUR_CHANNEL_ACCESS_TOKEN')
-handler = WebhookHandler('YOUR_CHANNEL_SECRET')
+CHANNEL_ACCESS_TOKEN = os.getenv('CHANNEL_ACCESS_TOKEN', 'YOUR_CHANNEL_ACCESS_TOKEN')
+CHANNEL_SECRET = os.getenv('CHANNEL_SECRET', 'YOUR_CHANNEL_SECRET')
+
+line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
+handler = WebhookHandler(CHANNEL_SECRET)
 
 # ==========================================
 # DATA & CATALOG DICTIONARY
@@ -86,7 +90,7 @@ def create_edit_choice_flex(store_name):
                     {"type": "separator", "margin": "sm"},
                     {
                         "type": "box",
-                        "layout": "horizontal",  # จัดเรียง ซ้าย - ขวา
+                        "layout": "horizontal",
                         "spacing": "sm",
                         "contents": [
                             {
@@ -252,14 +256,18 @@ def create_guide_menu_flex():
     )
 
 # ==========================================
-# WEBHOOK & EVENT HANDLERS (FIXED CALLBACK)
+# WEBHOOK & ROUTING (แก้ไขจุด 404 และ Signature)
 # ==========================================
+
+@app.route("/", methods=['GET'])
+def home():
+    return "Bot is alive and running!", 200
 
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get('X-Line-Signature', '')
     
-    # ✅ จุดที่แก้ไข: ดึงข้อมูลแบบ Raw Data (as_text=False) แล้ว decode เป็น utf-8 ให้ถูกต้อง
+    # ดึง Raw Body เป็น Bytes เพื่อให้ Signature ตรงกับที่ LINE ส่งมา
     body = request.get_data(as_text=False).decode('utf-8')
     
     try:
@@ -268,17 +276,19 @@ def callback():
         abort(400)
     return 'OK'
 
+# ==========================================
+# EVENT HANDLERS
+# ==========================================
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     text = event.message.text.strip().lower()
     
-    # 1. เช็กคำสั่งเรียกดูคู่มือ
     if text in ["คู่มือ", "help", "วิธีใช้", "แคตตาล็อก"]:
         guide_menu = create_guide_menu_flex()
         line_bot_api.reply_message(event.reply_token, guide_menu)
         return
         
-    # 2. เช็กกรณีพิมพ์ตัวเลขเดี่ยวๆ (เพื่ออัปเดตจำนวนสินค้าหลังเลือกโหมดแก้จำนวน)
     if event.message.text.strip().isdigit():
         new_qty = int(event.message.text.strip())
         line_bot_api.reply_message(
@@ -287,7 +297,6 @@ def handle_text_message(event):
         )
         return
         
-    # 3. เช็กคำสั่งสรุปยอดเบื้องต้น
     if text.startswith("สรุป"):
         line_bot_api.reply_message(
             event.reply_token,
@@ -301,7 +310,6 @@ def handle_postback(event):
     action = params.get('action')
     store_name = params.get('store')
     
-    # --- จัดการเรื่องคู่มือ (Guide Topics) ---
     if action == 'guide':
         topic = params.get('topic')
         if topic == 'summary':
@@ -345,7 +353,6 @@ def handle_postback(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=content))
         return
 
-    # --- จัดการเรื่องการแก้ไขออเดอร์ (Edit Flow) ---
     if action == 'edit_menu':
         flex_msg = create_edit_choice_flex(store_name)
         line_bot_api.reply_message(event.reply_token, flex_msg)
