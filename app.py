@@ -283,18 +283,13 @@ def handle_message(event):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้าและบันทึกครบถ้วน (แก้ปัญหา Order ตกหล่นและสเตตัสไม่ตรง) ──
+    # ── ระบบรับ Order รองรับหลายสินค้า + รองรับเคสสินค้าผิดหลายตัวพร้อมกัน (ไม่ตกหล่น) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
     
     parsed_orders = []
-    has_error = False
-    error_sku = ""
-    error_order_date = ""
-    error_shop_name = ""
-    error_qty = 1
-    error_status = "pending"
+    errors_list = []  # 📌 รองรับเก็บรายการที่ผิดพลาดหลายตัวพร้อมกัน
 
     for line in lines:
         line_str = line.strip()
@@ -364,14 +359,16 @@ def handle_message(event):
                 
                 product_info = PRODUCT_MAP.get(clean_sku)
                 if not product_info:
-                    has_error = True
-                    error_sku = sku_raw
-                    error_order_date = order_date
-                    error_shop_name = shop_name
-                    error_qty = qty
-                    error_status = line_status
+                    # 📌 บันทึกเก็บรหัสที่ผิดใส่ List ไว้ทั้งหมด (ไม่เบรกการทำงาน เพื่อให้อ่านตัวถัดไปต่อจนจบ)
+                    errors_list.append({
+                        "sku": sku_raw,
+                        "order_date": order_date,
+                        "shop_name": shop_name,
+                        "qty": qty,
+                        "status": line_status
+                    })
                     i += 1
-                    continue  # 📌 ไม่ใช้ break แล้ว เพื่อให้อ่านและบันทึกรายการอื่นๆ ทั้งก่อนและหลังจนครบ
+                    continue
                 
                 product_name = product_info["name"]
                 category = product_info["category"]
@@ -390,22 +387,23 @@ def handle_message(event):
                 })
                 i += 1
 
-    # 📌 บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที (ทั้งก่อนและหลังจุดที่พิมพ์ผิดจะไม่ถูกตัดทิ้ง)
+    # 📌 บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที
     for record in parsed_orders:
         res = supabase.table("orders").insert(record).execute()
         if res.data:
             success_records.append(res.data[0])
 
-    # 📌 หากพบรหัสสินค้าผิด ให้แจ้งเตือนปุ่มเลือกแก้เฉพาะตัวที่ผิด แต่ Order อื่นๆ ถูกบันทึกเก็บไว้เรียบร้อยแล้ว
-    if has_error:
-        matches = difflib.get_close_matches(error_sku, PRODUCT_MAP.keys(), n=3, cutoff=0.4)
+    # 📌 หากพบรหัสสินค้าผิด ให้สร้างปุ่มเลือกแก้ไขสำหรับรายการที่ผิดตัวแรกในลิสต์
+    if errors_list:
+        err = errors_list[0] # หยิบตัวแรกมาให้ผู้ใช้กดแก้ก่อน
+        matches = difflib.get_close_matches(err["sku"], PRODUCT_MAP.keys(), n=3, cutoff=0.4)
         if matches:
             buttons = []
             for m in matches:
                 buttons.append(ButtonComponent(
                     style='primary',
                     margin='sm',
-                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{error_order_date}_{error_shop_name}_{m}_{error_qty}_{error_status}")
+                    action=MessageAction(label=f"{m}: {PRODUCT_MAP[m]['name']}", text=f"quickadd_{err['order_date']}_{err['shop_name']}_{m}_{err['qty']}_{err['status']}")
                 ))
             flex_msg = FlexSendMessage(
                 alt_text="เลือกสินค้าที่ถูกต้อง",
@@ -413,8 +411,8 @@ def handle_message(event):
                     body=BoxComponent(
                         layout='vertical',
                         contents=[
-                            TextComponent(text=f"⚠️ บันทึกรายการที่ถูกต้องแล้ว แต่ไม่พบรหัส '{error_sku}'", weight='bold', size='sm', color='#FF5555'),
-                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียงสำหรับรายการที่ผิดพลาด:", size='xs', color='#666666', margin='sm'),
+                            TextComponent(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัส '{err['sku']}'", weight='bold', size='sm', color='#FF5555'),
+                            TextComponent(text="กรุณาเลือกสินค้าที่ใกล้เคียง:", size='xs', color='#666666', margin='sm'),
                             SeparatorComponent(margin='md')
                         ] + buttons
                     )
@@ -423,7 +421,7 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, flex_msg)
             return
         else:
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัสสินค้า '{error_sku}' กรุณาตรวจสอบรหัสในคู่มือ"))
+            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัสสินค้า '{err['sku']}' กรุณาตรวจสอบรหัสในคู่มือ"))
             return
 
     # 📌 หากไม่มีข้อผิดพลาด บันทึกเสร็จแล้วแสดงสรุปยอดทุกวันทั้งหมดทันที
@@ -711,12 +709,20 @@ def generate_single_day_bubble(order_date, orders):
         )
         contents.append(SeparatorComponent(margin='md'))
 
+    # 📌 จัดกลุ่มรวมยอดสินค้าตามชื่อเต็ม (Product Name) สำหรับแสดงผลสรุปยอดด้านล่าง
+    agg_products = {}
+    for item in orders:
+        p_name = item['product_name']
+        if p_name not in agg_products:
+            agg_products[p_name] = 0
+        agg_products[p_name] += item['qty']
+
     summary_box = [
         TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
     ]
-    for item in orders:
-        pct = (item["qty"] / total_qty * 100) if total_qty > 0 else 0
-        summary_box.append(TextComponent(text=f"  • {item['product_code']} : {item['qty']} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
+    for p_name, qty in agg_products.items():
+        pct = (qty / total_qty * 100) if total_qty > 0 else 0
+        summary_box.append(TextComponent(text=f"  • {p_name} : {qty} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
     
     contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
     contents.append(SeparatorComponent(margin='md'))
@@ -839,9 +845,19 @@ def generate_status_summary_carousel(status_name, orders):
             contents.append(SeparatorComponent(margin='md'))
 
         if is_last:
+            agg_products_status = {}
+            for item in orders:
+                p_name = item['product_name']
+                if p_name not in agg_products_status:
+                    agg_products_status[p_name] = 0
+                agg_products_status[p_name] += item['qty']
+
             summary_box = [
                 TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
             ]
+            for p_name, qty in agg_products_status.items():
+                pct = (qty / total_qty * 100) if total_qty > 0 else 0
+                summary_box.append(TextComponent(text=f"  • {p_name} : {qty} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
             contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
 
         contents.append(TextComponent(text=f"หน้าที่ {idx+1}/{len(shop_chunks)}", size='xxs', color='#aaaaaa', align='center', margin='md'))
