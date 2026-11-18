@@ -177,7 +177,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # ตรวจสอบสถานะท้ายประโยค ถ้าไม่มีให้เซ็ตเป็น 'pending' อัตโนมัติ
         status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
@@ -517,7 +516,6 @@ def process_webhook_event(event):
         parsed_list = parse_order_text(text)
 
         if not parsed_list:
-            # แจ้งเตือนเมื่อรูปแบบไม่ถูกต้อง เพื่อให้ผู้ใช้รู้ตัวและไมเงียบหายไปเฉยๆ
             send_reply(reply_token, [{
                 "type": "text",
                 "text": f"⚠️ รูปแบบไม่ถูกต้อง: ไม่พบรายการสินค้า หรือรูปแบบไม่สมบูรณ์ในบรรทัด: {text}"
