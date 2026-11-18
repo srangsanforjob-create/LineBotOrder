@@ -108,6 +108,7 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
+    app.logger.info(f"Received message: {text}")
 
     # 1. Handle Summary Command (พิมพ์ "สรุป")
     if text.lower().startswith("สรุป") or text.lower().startswith("summary"):
@@ -145,12 +146,13 @@ def handle_message(event):
             # บันทึกลง Supabase Table 'orders'
             if supabase:
                 try:
-                    supabase.table("orders").insert({
+                    res = supabase.table("orders").insert({
                         "store": store_name,
                         "order_date": order_date.strftime('%Y-%m-%d'),
                         "items_desc": order_details,
                         "status": "Pending"
                     }).execute()
+                    app.logger.info(f"Supabase Insert Success: {res}")
                 except Exception as e:
                     app.logger.error(f"Supabase Insert Error: {e}")
             
@@ -159,7 +161,6 @@ def handle_message(event):
             error_messages.append(f"❌ รูปแบบไม่ถูกต้อง: '{line}'")
 
     if success_count > 0:
-        # บันทึกสำเร็จแล้ว ส่ง Flex Message สรุปผลกลับมาทันทีโดยอัตโนมัติ
         handle_summary_command(event, "สรุป")
     else:
         matched, match_type = fuzzy_match_product(text)
