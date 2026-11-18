@@ -206,7 +206,7 @@ def parse_order_text(raw_text):
             clean_t = tok_str.lower().strip()
             if clean_t in ALIAS_MAP or clean_t in CODES:
                 return True
-            if clean_t == "sup": # พิมพ์มาแค่ sup ลอยๆ ถือว่าไม่สมบูรณ์ ต้องให้ผู้ใช้ระบุ SKU
+            if clean_t == "sup":
                 return False
             if re.match(r"^sup[a-z0-9\-]+$", clean_t):
                 return True
@@ -224,7 +224,7 @@ def parse_order_text(raw_text):
                 break
 
         if first_item_idx == -1:
-            global_errors.append(f"ไม่พบรายการสินค้า หรือรหัสสินค้าไม่สมบูรณ์ในบรรทัด: {line} (กรุณาระบุ SKU เช่น supl1)")
+            global_errors.append(f"ไม่พบรายการสินค้า หรือรหัสสินค้าไม่สมบูรณ์ในบรรทัด: {line}")
             continue
 
         shop_name = " ".join(tokens[:first_item_idx]).strip() if first_item_idx > 0 else "ร้านค้าทั่วไป"
@@ -511,7 +511,7 @@ def process_webhook_event(event):
         if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
             send_reply(reply_token, [{
                 "type": "text",
-                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [วันที่] [ชื่อร้าน] [สินค้า จำนวน] [สถานะ]\nตัวอย่าง: 19 แซ่บยโส supl1 R1 order\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [วันที่] [ชื่อร้าน] [สินค้า จำนวน] [สถานะ]\nตัวอย่าง: 19 แซ่บยโส L1 R1 order\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
             }])
             return
 
@@ -538,12 +538,10 @@ def process_webhook_event(event):
                     "status": entry["status"]
                 }
                 
-                # กรองเฉพาะคอลัมน์มาตรฐาน (CODES) ที่มีอยู่ในตาราง orders จริงๆ เพื่อป้องกัน Error PGRST204
+                # กรองส่งเฉพาะคอลัมน์มาตรฐาน (CODES) ไปยัง Supabase เพื่อไม่ให้เกิด Error PGRST204
                 for k, v in entry["items"].items():
                     if k in CODES:
                         payload[k] = v
-                    # (หมายเหตุ: หากต้องการบันทึก sup_ ลงตารางจริง จะต้องไปสร้างคอลัมน์ใน Supabase ก่อน 
-                    # แต่ในที่นี้จะกรองเฉพาะคอลัมน์มาตรฐานเพื่อไม่ให้บอทล่มครับ)
 
                 supabase.table("orders").insert(payload).execute()
                 inserted_count += 1
