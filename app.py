@@ -171,13 +171,13 @@ def get_or_create_shop(shop_name):
 def parse_order_text(raw_text):
     lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
     parsed_items_list = []
-    global_errors = []
 
     for line in lines:
         tokens = line.split()
         if not tokens:
             continue
 
+        # ตรวจสอบสถานะท้ายประโยค ถ้าไม่มีให้เซ็ตเป็น 'pending' อัตโนมัติ
         status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
@@ -295,7 +295,7 @@ def parse_order_text(raw_text):
                 "items": items
             })
 
-    return parsed_items_list, global_errors
+    return parsed_items_list
 
 def get_product_display_name(code):
     if code.startswith("sup_"):
@@ -506,7 +506,7 @@ def process_webhook_event(event):
         if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
             send_reply(reply_token, [{
                 "type": "text",
-                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [ชื่อร้าน] [สินค้า จำนวน] (หากไม่ใส่สถานะ ระบบจะตั้งเป็น 'ยังไม่ได้ Order' ให้อัตโนมัติ)\nตัวอย่าง: แช่บยโส L1 R1\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [ชื่อร้าน] [สินค้า จำนวน] (หากไม่ใส่สถานะ ระบบจะตั้งเป็น 'ยังไม่ได้ Order' ให้อัตโนมัติ)\nตัวอย่าง: 19 แช่บยโส L1 R1\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
             }])
             return
 
@@ -514,9 +514,14 @@ def process_webhook_event(event):
             send_reply(reply_token, [build_carousel(chat_id)])
             return
 
-        parsed_list, errors = parse_order_text(text)
+        parsed_list = parse_order_text(text)
 
         if not parsed_list:
+            # แจ้งเตือนเมื่อรูปแบบไม่ถูกต้อง เพื่อให้ผู้ใช้รู้ตัวและไมเงียบหายไปเฉยๆ
+            send_reply(reply_token, [{
+                "type": "text",
+                "text": f"⚠️ รูปแบบไม่ถูกต้อง: ไม่พบรายการสินค้า หรือรูปแบบไม่สมบูรณ์ในบรรทัด: {text}"
+            }])
             return
 
         inserted_count = 0
@@ -532,7 +537,7 @@ def process_webhook_event(event):
                 }
                 
                 for k, v in entry["items"].items():
-                    if k in CODES:
+                    if k in CODES or k.startswith("sup_"):
                         payload[k] = v
 
                 supabase.table("orders").insert(payload).execute()
