@@ -64,67 +64,6 @@ def get_full_product_name(code):
 # UI COMPONENTS (FLEX MESSAGES)
 # ==========================================
 
-def create_store_box(index, store_name, status, items):
-    """ สร้างกล่องข้อมูลรายร้าน (ไม่มีวันที่ซ้ำซ้อนด้านใน) """
-    item_contents = []
-    for item in items:
-        full_name = get_full_product_name(item['name'])
-        item_contents.append({
-            "type": "text",
-            "text": f"• {full_name} : {item['qty']}",
-            "size": "sm",
-            "color": "#333333"
-        })
-        
-    row1, row2 = [], []
-    for i, s in enumerate(STATUSES):
-        btn = {
-            "type": "button",
-            "style": "secondary",
-            "height": "sm",
-            "action": {
-                "type": "postback",
-                "label": s["label"],
-                "data": f"action=update_status&store={store_name}&status={s['value']}"
-            }
-        }
-        if i < 3:
-            row1.append(btn)
-        else:
-            row2.append(btn)
-
-    store_block = {
-        "type": "box",
-        "layout": "vertical",
-        "spacing": "sm",
-        "contents": [
-            {
-                "type": "text",
-                "text": f"🏪 {index}. {store_name} | [{status}]",
-                "weight": "bold",
-                "size": "sm",
-                "color": "#1DB446"
-            },
-            {"type": "separator", "margin": "xs"}
-        ] + item_contents + [
-            {"type": "separator", "margin": "md"},
-            {"type": "box", "layout": "horizontal", "spacing": "sm", "contents": row1},
-            {"type": "box", "layout": "horizontal", "spacing": "sm", "contents": row2},
-            {
-                "type": "button",
-                "style": "link",
-                "height": "sm",
-                "action": {
-                    "type": "postback",
-                    "label": "✏️ แก้ไขออเดอร์ร้านนี้",
-                    "data": f"action=edit_menu&store={store_name}"
-                }
-            },
-            {"type": "separator", "margin": "lg"}
-        ]
-    }
-    return store_block
-
 def create_edit_choice_flex(store_name):
     """ การ์ดเลือกโหมดแก้ไข (ซ้าย: แก้จำนวน | ขวา: แก้ไขสินค้า) """
     return FlexSendMessage(
@@ -313,15 +252,18 @@ def create_guide_menu_flex():
     )
 
 # ==========================================
-# WEBHOOK & EVENT HANDLERS
+# WEBHOOK & EVENT HANDLERS (FIXED CALLBACK)
 # ==========================================
 
 @app.route("/callback", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
-    body = request.get_data(as_text=True)
+    
+    # ✅ จุดที่แก้ไข: ดึงข้อมูลแบบ Raw Data (as_text=False) แล้ว decode เป็น utf-8 ให้ถูกต้อง
+    body = request.get_data(as_text=False).decode('utf-8')
+    
     try:
-        handler.handle(body, InvalidSignatureError)
+        handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
     return 'OK'
@@ -339,7 +281,6 @@ def handle_text_message(event):
     # 2. เช็กกรณีพิมพ์ตัวเลขเดี่ยวๆ (เพื่ออัปเดตจำนวนสินค้าหลังเลือกโหมดแก้จำนวน)
     if event.message.text.strip().isdigit():
         new_qty = int(event.message.text.strip())
-        # TODO: ดึง Session ร้านที่กำลังแก้ไขอยู่ แล้วอัปเดตจำนวนลง Supabase
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f"✅ อัปเดตจำนวนใหม่เป็น {new_qty} เรียบร้อยแล้วครับ!")
@@ -348,7 +289,6 @@ def handle_text_message(event):
         
     # 3. เช็กคำสั่งสรุปยอดเบื้องต้น
     if text.startswith("สรุป"):
-        # TODO: ดึงข้อมูลจาก Supabase มาสร้าง Carousel Flex Message แล้วส่งกลับ
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text="📊 [ระบบกำลังจำลอง] แสดงสรุปยอดออเดอร์ทั้งหมดในรูปแบบ Carousel...")
@@ -428,7 +368,6 @@ def handle_postback(event):
     elif action == 'apply_new_item':
         sku = params.get('sku')
         full_name = get_full_product_name(sku)
-        # TODO: บันทึกการเปลี่ยนสินค้าลง Supabase
         line_bot_api.reply_message(
             event.reply_token,
             TextSendMessage(text=f"✅ เปลี่ยนสินค้าของร้าน '{store_name}' เป็น [{full_name}] เรียบร้อยแล้วครับ!")
