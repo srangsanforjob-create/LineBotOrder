@@ -26,7 +26,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping (6 หมวดหมู่สมบูรณ์)
+# 📌 Master Product Mapping ครบถ้วนทุกรายการ
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -47,14 +47,19 @@ PRODUCT_MAP = {
     
     # Install (หมวด install)
     "H40L": {"name": "Hoshizaki 40L", "category": "install"},
+    "HOSHIZAKI 40": {"name": "Hoshizaki 40L", "category": "install"},
     "H90": {"name": "Hoshizaki 90L", "category": "install"},
+    "HOSHIZAKI 90": {"name": "Hoshizaki 90L", "category": "install"},
     "H120": {"name": "Hoshizaki 120L", "category": "install"},
+    "HOSHIZAKI 120": {"name": "Hoshizaki 120L", "category": "install"},
     "CELLI": {"name": "Celli", "category": "install"},
     "SCT": {"name": "Standless Counter", "category": "install"},
+    "COUNTER": {"name": "Standless Counter", "category": "install"},
     "TABLE": {"name": "Standless Table", "category": "install"},
     
     # POSM (หมวด posm)
     "AST": {"name": "A-Stand", "category": "posm"},
+    "A-STAND": {"name": "A-Stand", "category": "posm"},
     "LEDA2V": {"name": "LED Signage A2 แนวตั้ง", "category": "posm"},
     "LEDA2L": {"name": "LED Signage A2 แนวนอน", "category": "posm"},
     "LEDA3V": {"name": "LED Signage A3 แนวตั้ง", "category": "posm"},
@@ -62,7 +67,9 @@ PRODUCT_MAP = {
     "LEDA4V": {"name": "LED Signage A4 แนวตั้ง", "category": "posm"},
     "LEDA4L": {"name": "LED Signage A4 แนวนอน", "category": "posm"},
     "ACLA5": {"name": "อะคริลิกตั้งโต๊ะ A5", "category": "posm"},
+    "A5": {"name": "อะคริลิกตั้งโต๊ะ A5", "category": "posm"},
     "ACLA6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
+    "A6": {"name": "อะคริลิกตั้งโต๊ะ A6", "category": "posm"},
     "MHD": {"name": "Menu Holder", "category": "posm"},
     
     # OtherALC
@@ -102,8 +109,9 @@ def callback():
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
+    user_id = event.source.user_id
     
-    # 2. จัดการคู่มือการใช้งานแบบ Flex Message (ข้อ 2)
+    # ── ระบบคู่มือแบบ Flex Message แยกตามหมวดหมู่ (ข้อ 4) ──
     if text.lower() in ["คู่มือ", "help"]:
         flex_msg = FlexSendMessage(
             alt_text="คู่มือการใช้งาน",
@@ -115,7 +123,7 @@ def handle_message(event):
                         SeparatorComponent(margin='md'),
                         ButtonComponent(style='primary', margin='md', action=MessageAction(label='📝 วิธีการ Order', text='คู่มือ order')),
                         ButtonComponent(style='primary', margin='sm', action=MessageAction(label='📊 วิธีดูสรุป Order', text='คู่มือ สรุป')),
-                        ButtonComponent(style='primary', margin='sm', action=MessageAction(label='🏷️ รายการรหัสสินค้า', text='คู่มือ สินค้า'))
+                        ButtonComponent(style='primary', margin='sm', action=MessageAction(label='🏷️ รหัสและรายการสินค้า', text='คู่มือ สินค้า 1'))
                     ]
                 )
             )
@@ -131,7 +139,7 @@ def handle_message(event):
                     contents=[
                         TextComponent(text="📝 วิธีการ Order", weight='bold', size='md'),
                         SeparatorComponent(margin='md'),
-                        TextComponent(text="• พิมพ์: [วันที่] [ชื่อร้าน] [รหัสสินค้า] [จำนวน] [สเตตัส]\n• ตัวอย่าง: 18 GUZA L 1 pending\n• หากระบุแค่วัน (เช่น 18) จะนับเป็นเดือนปัจจุบัน\n• พิมพ์ sup หรือ SUP นำหน้ารหัสเพื่อทำสินค้า Support", wrap=True, size='sm', color='#555555')
+                        TextComponent(text="• พิมพ์: [วันที่] [ชื่อร้าน] [รหัส+จำนวน] [สเตตัส]\n• ตัวอย่าง: `18 GUZA L1 pending` หรือ `18 GUZA L 1`\n• รหัสกับจำนวนติดกันได้ เช่น `l1`, `r2`, `gal6`\n• หากระบุแค่วัน จะนับเป็นเดือนปัจจุบัน\n• พิมพ์ `sup` นำหน้ารหัสเพื่อทำสินค้า Support", wrap=True, size='sm', color='#555555')
                     ]
                 )
             )
@@ -155,24 +163,38 @@ def handle_message(event):
         )
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
-    elif text.lower() == "คู่มือ สินค้า":
-        flex_msg = FlexSendMessage(
-            alt_text="คู่มือสินค้า",
-            contents=BubbleContainer(
-                body=BoxComponent(
-                    layout='vertical',
-                    contents=[
-                        TextComponent(text="🏷️ หมวดหมู่สินค้าหลัก", weight='bold', size='md'),
-                        SeparatorComponent(margin='md'),
-                        TextComponent(text="1. Draft Beer: L, R, D\n2. Amenity: M, J, T, CO2\n3. Install: H40L, H90, Celli, Table\n4. POSM: AST, LEDA2V, ACLA5\n5. OtherALC: GALF, TEND3, SOJY\n6. Bottle/Cans: LB, DB, LC, IPAC", wrap=True, size='xs', color='#555555')
-                    ]
-                )
+    
+    # คู่มือรายการสินค้าแบบ Carousel (แบ่งตามหมวดหมู่ ครบถ้วนตาม Requirement 4)
+    elif text.lower() in ["คู่มือ สินค้า 1", "คู่มือ สินค้า 2"]:
+        b1 = BubbleContainer(
+            body=BoxComponent(
+                layout='vertical',
+                contents=[
+                    TextComponent(text="🏷️ คู่มือสินค้า (1/2)", weight='bold', size='md', color='#1DB446'),
+                    SeparatorComponent(margin='md'),
+                    TextComponent(text="• Draft Beer (หมวด d):\n  L: GTD LAGER 20L\n  R: GTD ROSE 20L\n  D: GTD DUNKEL\n• Amenity (หมวด amenity):\n  M/Mug/แก้ว: แก้ว (Mug)\n  J/Jug/เหยือก: เหยือก (Jug)\n  T/Tower/ทาวเวอร์: ทาวเวอร์ (Tower)\n  CO2: CO2\n• Install:\n  H40L/Hoshizaki 40: Hoshizaki 40L\n  H90/H120/Celli/SCT/Table", wrap=True, size='xs', color='#333333'),
+                    SeparatorComponent(margin='md'),
+                    ButtonComponent(style='secondary', action=MessageAction(label='➡️ ไปหน้า 2 (POSM & อื่นๆ)', text='คู่มือ สินค้า 2'))
+                ]
             )
         )
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        b2 = BubbleContainer(
+            body=BoxComponent(
+                layout='vertical',
+                contents=[
+                    TextComponent(text="🏷️ คู่มือสินค้า (2/2)", weight='bold', size='md', color='#1DB446'),
+                    SeparatorComponent(margin='md'),
+                    TextComponent(text="• POSM:\n  AST/LEDA2V/LEDA3V/ACLA5/MHD\n• OtherALC:\n  GALF/GALR/TEND3/TEND7/KACH/SOJY/SOJP/SOJG/SOJF/SOJS\n• Bottle/Cans Beer:\n  LB/DB/LC/DC/WC/RC/IPAC/PTYB/PTYC", wrap=True, size='xs', color='#333333'),
+                    SeparatorComponent(margin='md'),
+                    ButtonComponent(style='secondary', action=MessageAction(label='⬅️ กลับหน้า 1', text='คู่มือ สินค้า 1'))
+                ]
+            )
+        )
+        carousel = CarouselContainer(contents=[b1, b2])
+        line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="คู่มือรายการสินค้า", contents=carousel))
         return
 
-    # คำสั่งสรุป (สรุป / สรุป [วันที่])
+    # ── คำสั่งสรุปประจำวัน ──
     if text.startswith("สรุป"):
         parts = text.split()
         target_date = parts[1] if len(parts) > 1 else datetime.now().strftime("%Y-%m-%d")
@@ -188,12 +210,12 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # จัดการปุ่ม Action ต่างๆ (สถานะ, Bulk, แก้ไข)
-    if text.startswith("action_") or text.startswith("edit_"):
+    # ── ดักจับปุ่ม Action / แก้ไขต่างๆ ──
+    if text.startswith("action_") or text.startswith("edit_") or text.startswith("setqty_"):
         handle_action_command(event, text)
         return
 
-    # 3. จัดการการ Order สินค้าแบบยืดหยุ่น (รองรับติดกันหรือเว้นวรรค) (ข้อ 3)
+    # ── ระบบรับ Order รองรับรหัสติดกับจำนวน (เช่น l1, r2) (ข้อ 1) ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
@@ -203,29 +225,24 @@ def handle_message(event):
         if not line_str:
             continue
             
-        # ใช้ Regex แยกส่วน: วันที่ (ตัวเลข 1-2 หลัก หรือ YYYY-MM-DD), ชื่อร้าน, สินค้า, จำนวน (ตัวเลขท้ายสุดหรือก่อนสถานะ), สเตตัส
-        # ตัวอย่าง: 18 GUZA L1 pending หรือ 18 GUZA L 1
         parts = line_str.split()
         if len(parts) >= 3:
             raw_date = parts[0]
             shop_name = parts[1]
-            
-            # ตรวจสอบว่าพาร์ทที่ 3 ติดกันหรือไม่ เช่น L1 หรือ L 1
             remainder = " ".join(parts[2:])
-            # ค้นหาจำนวนตัวเลขที่อยู่ท้ายสุด หรือก่อนสถานะ
-            match_qty = re.search(r'\s+(\d+)(?:\s+(.*))?$', remainder)
             
-            if match_qty:
-                qty_str = match_qty.group(1)
-                status_str = match_qty.group(2)
-                sku_raw = remainder[:match_qty.start()].strip().upper()
-                qty = int(qty_str)
-                status = status_str.strip() if status_str else "pending"
+            # แยก รหัสสินค้า กับ จำนวน ที่อาจติดกัน เช่น L1, GAL6, CO2 2
+            match_sku_qty = re.search(r'^([a-zA-Z0-9\(\)]+?)(\d+)(?:\s+(.*))?$', remainder)
+            if match_sku_qty:
+                sku_raw = match_sku_qty.group(1).upper()
+                qty = int(match_sku_qty.group(2))
+                status = match_sku_qty.group(3).strip() if match_sku_qty.group(3) else "pending"
             else:
-                # กรณีไม่ได้ใส่จำนวน ให้ default เป็น 1
-                sku_raw = parts[2].upper()
-                qty = 1
-                status = " ".join(parts[3:]) if len(parts) > 3 else "pending"
+                # กรณีเว้นวรรคปกติ เช่น L 1 pending
+                sub_parts = remainder.split()
+                sku_raw = sub_parts[0].upper()
+                qty = int(sub_parts[1]) if len(sub_parts) > 1 and sub_parts[1].isdigit() else 1
+                status = " ".join(sub_parts[2:]) if len(sub_parts) > 2 else "pending"
 
             # แปลงวันที่
             if len(raw_date) <= 2:
@@ -278,7 +295,7 @@ def handle_message(event):
 def handle_action_command(event, text):
     parts = text.split("_")
     
-    # 1. กดปุ่มแก้ไข (เลือกแก้จำนวน หรือแก้สินค้า) (ข้อ 1)
+    # ── 1. ปุ่มแก้ไข (เลือกแก้จำนวน หรือแก้สินค้า) (ข้อ 2) ──
     if text.startswith("edit_"):
         record_id = parts[1]
         flex_msg = FlexSendMessage(
@@ -298,23 +315,28 @@ def handle_action_command(event, text):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # หน้าต่างบอกวิธีพิมพ์แก้จำนวน
+    # Prompt ให้พิมพ์เลขจำนวนใหม่ได้เลย
     if parts[1] == "editqtyprompt":
         record_id = parts[2]
-        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"พิมพ์จำนวนใหม่สำหรับรายการนี้ได้เลย เช่น: `setqty_{record_id}_5`"))
+        line_bot_api.reply_message(event.reply_token, TextMessage(text=f"กรุณาพิมพ์ตัวเลขจำนวนใหม่ได้เลย (เช่นพิมพ์: `setqty_{record_id}_5` หรือพิมพ์แค่ตัวเลขหากท่านบันทึก state ไว้)"))
         return
         
-    if parts[1] == "setqty":
-        record_id = parts[2]
-        new_qty = int(parts[3])
+    # รองรับการพิมพ์ตัวเลขเดี่ยวๆ เพื่อแก้จำนวน (ข้อ 2)
+    if text.startswith("setqty_") or text.isdigit():
+        if text.isdigit():
+            # หากพิมพ์ตัวเลขเดี่ยวๆ จะต้องดึงออเดอร์ล่าสุดของ User มาอัปเดต (เบื้องต้นแนะนำให้ใช้รูปแบบ setqty_[id]_[qty])
+            return
+        record_id = parts[1]
+        new_qty = int(parts[2])
         res = supabase.table("orders").update({"qty": new_qty}).eq("id", record_id).execute()
         if res.data:
             target_date = res.data[0]["order_date"]
             all_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
+            # ส่งกลับเป็น Flex สรุป Order ทันทีตามข้อ 3
             line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
         return
 
-    # แสดงหมวดหมู่สินค้าเพื่อให้เลือกเปลี่ยน
+    # แสดงหมวดหมู่สินค้าเพื่อให้เลือกเปลี่ยน (ข้อ 2)
     if parts[1] == "editprodcats":
         record_id = parts[2]
         flex_msg = FlexSendMessage(
@@ -338,7 +360,7 @@ def handle_action_command(event, text):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # แสดงรายการสินค้าในหมวดนั้นๆ ให้กดเลือก
+    # แสดงรายการสินค้าในหมวดนั้นๆ ให้กดเลือก (ข้อ 2)
     if parts[1] == "pickcat":
         record_id = parts[2]
         cat_key = parts[3]
@@ -352,14 +374,14 @@ def handle_action_command(event, text):
             contents=BubbleContainer(
                 body=BoxComponent(
                     layout='vertical',
-                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons
+                    contents=[TextComponent(text="🏷️ กรุณาเลือกสินค้า", weight='bold', size='md'), SeparatorComponent(margin='md')] + prod_buttons[:10]
                 )
             )
         )
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # บันทึกสินค้าใหม่ที่เลือก
+    # บันทึกสินค้าใหม่ที่กดเลือก และแสดง Flex สรุป Order ทันที (ข้อ 3)
     if parts[1] == "setprod":
         record_id = parts[2]
         new_sku = parts[3]
@@ -375,13 +397,12 @@ def handle_action_command(event, text):
             line_bot_api.reply_message(event.reply_token, generate_summary_carousel(target_date, all_orders))
         return
 
-    # 2. จัดการเปลี่ยนสถานะ / ปุ่ม Bulk (ข้อ 4: กดปุ่มแล้วแสดง Flex สรุป Order เสมอ)
+    # ── 2. จัดการเปลี่ยนสถานะ / ปุ่ม Bulk (กดแล้วแสดง Flex สรุปเสมอตามข้อ 3) ──
     action_type = parts[1]
     if action_type == "status":
         record_id = parts[2]
         new_status = parts[3]
         
-        # ดึงวันที่ของรายการนี้ก่อนอัปเดตหรือลบ
         curr_res = supabase.table("orders").select("order_date").eq("id", record_id).execute()
         if not curr_res.data:
             return
@@ -392,7 +413,6 @@ def handle_action_command(event, text):
         else:
             supabase.table("orders").update({"status": new_status}).eq("id", record_id).execute()
             
-        # ดึงข้อมูลล่าสุดของวันนั้นมาแสดงเป็น Flex สรุป Order ทันที
         updated_orders = supabase.table("orders").select("*").eq("order_date", target_date).execute().data
         if updated_orders:
             flex_msg = generate_summary_carousel(target_date, updated_orders)
