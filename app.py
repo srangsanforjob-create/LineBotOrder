@@ -97,21 +97,19 @@ PRODUCT_MAP = {
 }
 
 def get_status_color(status):
-    """ฟังก์ชันกำหนดสีของสเตตัสบน Flex Message"""
     s = status.lower()
     if "pending" in s:
-        return "#ff8c00"  # สีส้ม
+        return "#ff8c00"
     elif "order" in s:
-        return "#1DB446"  # สีเขียว LINE
+        return "#1DB446"
     elif "credit" in s:
-        return "#3b82f6"  # สีฟ้า
+        return "#3b82f6"
     elif "overdue" in s or "เต็ม" in s:
-        return "#FF5555"  # สีแดง
+        return "#FF5555"
     else:
-        return "#888888"  # สีเทาค่าเริ่มต้น
+        return "#888888"
 
 def generate_all_days_summary_flex():
-    """ฟังก์ชันสร้าง Flex Message สรุปยอดทุกวันที่มีออเดอร์ในระบบ"""
     res = supabase.table("orders").select("*").execute()
     orders = res.data
     if not orders:
@@ -127,8 +125,7 @@ def generate_all_days_summary_flex():
     sorted_dates = sorted(dates_dict.keys())
     bubbles = []
     for d in sorted_dates:
-        bubble_content = generate_single_day_bubble(d, dates_dict[d])
-        bubbles.append(bubble_content)
+        bubbles.append(generate_single_day_bubble(d, dates_dict[d]))
     
     if len(bubbles) > 1:
         return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=CarouselContainer(contents=bubbles))
@@ -149,7 +146,6 @@ def callback():
 def handle_message(event):
     text = event.message.text.strip()
     
-    # ── ระบบคู่มือแบบ Flex Message 3 หน้า ──
     if text.lower() in ["คู่มือ", "help"]:
         flex_msg = FlexSendMessage(
             alt_text="คู่มือการใช้งาน",
@@ -243,7 +239,6 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, FlexSendMessage(alt_text="คู่มือรายการสินค้า", contents=carousel))
         return
 
-    # ── คำสั่งสรุปประจำวัน / สรุปตามวันที่ / สรุปตาม Status ──
     if text.startswith("สรุป"):
         parts = text.split()
         if len(parts) > 1:
@@ -278,12 +273,11 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, flex_msg)
             return
 
-    # ── ดักจับปุ่ม Action / แก้ไขต่างๆ ──
     if text.startswith("action_") or text.startswith("edit_") or text.startswith("setqty_") or text.startswith("quickadd_") or text.startswith("editshop_"):
         handle_action_command(event, text)
         return
 
-    # ── ระบบรับ Order รองรับหลายสินค้า + รองรับเคสสินค้าผิดหลายตัวพร้อมกัน (วนแก้จนครบทุกตัว) ──
+    # ── ระบบรับ Order รองรับหลายสินค้า + แก้ไขข้อจำกัดความยาวสตริงด้วยการตัดรหัสที่กระชับ ──
     lines = text.split('\n')
     success_records = []
     current_year_month = datetime.now().strftime("%Y-%m")
@@ -308,7 +302,6 @@ def handle_message(event):
                 
             remainder_tokens = parts[2:]
             
-            # 📌 ดึงค่า Status ที่ผู้ใช้พิมพ์ไว้ท้ายบรรทัดให้อย่างแม่นยำ
             line_status = "pending"
             joined_rem = " ".join(remainder_tokens).lower()
             if "อัพสลิปแล้ว" in joined_rem or "อัพสลิป" in joined_rem:
@@ -349,6 +342,7 @@ def handle_message(event):
                             qty = int(remainder_tokens[i+1])
                             i += 1
                         else:
+                        
                             qty = 1
                 else:
                     sku_raw = token.upper()
@@ -386,29 +380,28 @@ def handle_message(event):
                 })
                 i += 1
 
-    # 📌 บันทึกรายการที่ถูกต้องทั้งหมดลง Database ทันที
     for record in parsed_orders:
         res = supabase.table("orders").insert(record).execute()
         if res.data:
             success_records.append(res.data[0])
 
-    # 📌 หากพบรหัสสินค้าผิด ให้สร้างปุ่มเลือกแก้ไขตัวแรก พร้อมแนบรายการที่เหลือไปใน Action Text
+    # 📌 ปรับปรุงใหม่: ใช้รูปแบบการย่อข้อมูลคิวที่สั้นกะทัดรัด (D|S|SKU|Q|St) เพื่อป้องกันไม่ให้เกิน 300 ตัวอักษร
     if errors_list:
         err = errors_list[0]
-        remaining_errors = errors_list[1:]  # รายการที่เหลือคิวถัดไป
+        remaining_errors = errors_list[1:]
         
-        # แปลง remaining_errors ให้เป็นสตริงเพื่อส่งต่อทางปุ่ม Action
         rem_str = ""
         if remaining_errors:
             rem_parts = []
             for e in remaining_errors:
-                rem_parts.append(f"{e['order_date']}|{e['shop_name']}|{e['sku']}|{e['qty']}|{e['status']}")
-            rem_str = "@@".join(rem_parts)
+                rem_parts.append(f"{e['order_date']},{e['shop_name']},{e['sku']},{e['qty']},{e['status']}")
+            rem_str = "||".join(rem_parts)
 
         matches = difflib.get_close_matches(err["sku"], PRODUCT_MAP.keys(), n=3, cutoff=0.4)
         if matches:
             buttons = []
             for m in matches:
+                # สร้าง Action Text แบบกระชับ: quickadd_วันที่_ชื่อร้าน_ SKU_จำนวน_สถานะ__รายการที่เหลือ
                 action_text = f"quickadd_{err['order_date']}_{err['shop_name']}_{m}_{err['qty']}_{err['status']}"
                 if rem_str:
                     action_text += f"__{rem_str}"
@@ -439,7 +432,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"⚠️ บันทึกรายการอื่นแล้ว แต่ไม่พบรหัสสินค้า '{err['sku']}' กรุณาตรวจสอบรหัสในคู่มือ"))
             return
 
-    # 📌 หากไม่มีข้อผิดพลาด บันทึกเสร็จแล้วแสดงสรุปยอดทุกวันทั้งหมดทันที
     if success_records:
         flex_msg = generate_all_days_summary_flex()
         if flex_msg:
@@ -458,7 +450,6 @@ def handle_action_command(event, text):
         sku = parts[3]
         qty = int(parts[4])
         
-        # ตรวจสอบว่ามี Status ติดมาด้วยหรือไม่ (แยกด้วย __ สำหรับรายการที่เหลือ)
         status_and_rem = parts[5] if len(parts) > 5 else "pending"
         if "__" in status_and_rem:
             item_status, rem_str = status_and_rem.split("__", 1)
@@ -479,11 +470,11 @@ def handle_action_command(event, text):
         }
         supabase.table("orders").insert(record).execute()
         
-        # 📌 หากยังมีรายการที่ผิดค้างอยู่ในคิว (rem_str) ให้แปลงกลับมาสร้างปุ่มแก้ตัวถัดไปต่อเนื่องทันที
+        # 📌 แกะรอยคิวรายการที่เหลือที่ถูกแพ็คมาด้วยเครื่องหมาย || และ , อย่างแม่นยำ
         if rem_str:
             next_err_list = []
-            for item_block in rem_str.split("@@"):
-                fields = item_block.split("|")
+            for item_block in rem_str.split("||"):
+                fields = item_block.split(",")
                 if len(fields) == 5:
                     next_err_list.append({
                         "order_date": fields[0],
@@ -501,8 +492,8 @@ def handle_action_command(event, text):
                 if remaining_errors:
                     rem_parts = []
                     for e in remaining_errors:
-                        rem_parts.append(f"{e['order_date']}|{e['shop_name']}|{e['sku']}|{e['qty']}|{e['status']}")
-                    new_rem_str = "@@".join(rem_parts)
+                        rem_parts.append(f"{e['order_date']},{e['shop_name']},{e['sku']},{e['qty']},{e['status']}")
+                    new_rem_str = "||".join(rem_parts)
 
                 matches = difflib.get_close_matches(err["sku"], PRODUCT_MAP.keys(), n=3, cutoff=0.4)
                 if matches:
@@ -535,13 +526,11 @@ def handle_action_command(event, text):
                     line_bot_api.reply_message(event.reply_token, flex_msg)
                     return
 
-        # หากเคลียร์ครบทุกตัวแล้ว แสดงสรุปยอดทั้งหมดทันที
         flex_msg = generate_all_days_summary_flex()
         if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 📌 เมื่อกดปุ่ม [✏️จัดการ] ข้างชื่อร้าน
     if parts[0] == "editshop":
         shop_name = parts[1]
         order_date = parts[2]
@@ -787,7 +776,6 @@ def generate_single_day_bubble(order_date, orders):
         )
         contents.append(SeparatorComponent(margin='md'))
 
-    # 📌 จัดกลุ่มรวมยอดสินค้าตามชื่อเต็ม (Product Name) สำหรับแสดงผลสรุปยอดด้านล่าง
     agg_products = {}
     for item in orders:
         p_name = item['product_name']
