@@ -178,7 +178,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # ตรวจสอบสถานะจากคำสุดท้าย ถ้าตรงกับสถานะให้ดึงออก ไม่งั้นใช้ default เป็น 'pending'
         status = 'pending'
         last_word = tokens[-1].lower()
         if last_word in STATUS_KEYWORDS:
@@ -188,7 +187,6 @@ def parse_order_text(raw_text):
         if not tokens:
             continue
 
-        # ตรวจสอบวันที่ (รองรับทั้งระบุและไม่ระบุ จะใช้วันที่ปัจจุบันแทน)
         order_date = get_bangkok_date_str()
         if tokens[0] in ["วันที่", "วัน"] and len(tokens) > 1:
             parsed_dt = resolve_date_token(tokens[1])
@@ -362,4 +360,232 @@ def build_carousel(chat_id):
                     "contents": [
                         make_mini_btn("Order ทั้งวัน", f"action=update_daily&date={ddate}&status=ordered", "#06C755"),
                         make_mini_btn("สลิปทั้งวัน", f"action=update_daily&date={ddate}&status=slip", "#00B900"),
-                        make_mini_
+                        make_mini_btn("ลบทั้งวัน", f"action=delete_daily&date={ddate}", "#FF334B", "secondary")
+                    ]
+                },
+                {"type": "separator", "margin": "lg"}
+            ]
+
+            for order in chunk:
+                o_id = order.get("id")
+                s_id = str(order.get("shop_id"))
+                shop_info = shop_map.get(s_id)
+                shop_name = shop_info["name"] if shop_info else "ร้านค้า"
+                order_status = order.get("status", "pending")
+                icon, label, color = STATUS_LABELS.get(order_status, ("⏳", "ยังไม่ได้ Order", "#FF9900"))
+
+                item_rows = []
+                for code in all_codes:
+                    q = safe_int(order.get(code))
+                    if q > 0:
+                        p_name = get_product_display_name(code)
+                        item_rows.append({
+                            "type": "box", "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#333333", "flex": 4},
+                                {"type": "text", "text": str(q), "size": "sm", "align": "end", "weight": "bold", "flex": 1}
+                            ]
+                        })
+                if not item_rows:
+                    item_rows.append({"type": "text", "text": "ไม่มีสินค้า", "size": "sm", "color": "#888888"})
+
+                order_buttons_row1 = {
+                    "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "sm",
+                    "contents": [
+                        make_mini_btn("Order", f"action=update_order&id={o_id}&status=ordered", "#06C755"),
+                        make_mini_btn("สลิป", f"action=update_order&id={o_id}&status=slip", "#00B900"),
+                        make_mini_btn("เครดิต", f"action=update_order&id={o_id}&status=credit", "#0099FF")
+                    ]
+                }
+                order_buttons_row2 = {
+                    "type": "box", "layout": "horizontal", "spacing": "xs", "margin": "xs",
+                    "contents": [
+                        make_mini_btn("รอOrder", f"action=update_order&id={o_id}&status=pending", "#FF9900"),
+                        make_mini_btn("เกินกำหนด", f"action=update_order&id={o_id}&status=overdue", "#E65100"),
+                        make_mini_btn("ลบ", f"action=delete_order&id={o_id}", "#FF334B", "secondary")
+                    ]
+                }
+
+                content_blocks.append({
+                    "type": "box", "layout": "vertical", "margin": "md",
+                    "contents": [
+                        {"type": "text", "text": shop_name, "weight": "bold", "size": "sm", "color": "#0066cc"},
+                        {"type": "text", "text": f"{icon} {label}", "size": "xs", "weight": "bold", "color": color},
+                        {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": item_rows},
+                        order_buttons_row1,
+                        order_buttons_row2,
+                        {"type": "separator", "margin": "md"}
+                    ]
+                })
+
+            if page_num == total_pages:
+                summary_rows = []
+                for code in all_codes:
+                    tot = daily_totals[code]
+                    if tot > 0:
+                        p_name = get_product_display_name(code)
+                        summary_rows.append({
+                            "type": "box", "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": f"• {p_name}", "size": "sm", "color": "#ffffff", "flex": 4},
+                                {"type": "text", "text": str(tot), "size": "sm", "align": "end", "weight": "bold", "color": "#ffffff", "flex": 1}
+                            ]
+                        })
+
+                if summary_rows:
+                    content_blocks.append({
+                        "type": "box", "layout": "vertical", "margin": "md", "paddingAll": "md",
+                        "backgroundColor": "#222222", "cornerRadius": "md",
+                        "contents": [
+                            {"type": "text", "text": "📦 รวมยอดสินค้าประจำวันนี้", "weight": "bold", "size": "sm", "color": "#ffcc00"},
+                            {"type": "box", "layout": "vertical", "spacing": "xs", "margin": "sm", "contents": summary_rows}
+                        ]
+                    })
+
+            bubbles.append({
+                "type": "bubble", "size": "mega",
+                "body": {
+                    "type": "box", "layout": "vertical",
+                    "contents": content_blocks
+                }
+            })
+
+    return {
+        "type": "flex",
+        "altText": "สรุปรายการออเดอร์ตามวัน",
+        "contents": {"type": "carousel", "contents": bubbles[:10]}
+    }
+
+def process_webhook_event(event):
+    source = event.get("source", {})
+    chat_type = source.get("type", "user")
+    if chat_type == "group":
+        chat_id = source.get("groupId")
+    elif chat_type == "room":
+        chat_id = source.get("roomId")
+    else:
+        chat_id = source.get("userId", "user")
+
+    reply_token = event.get("replyToken", "")
+
+    if event.get("type") == "postback":
+        data_str = event.get("postback", {}).get("data", "")
+        query_params = dict(qp.split("=", 1) for qp in data_str.split("&") if "=" in qp)
+        action = query_params.get("action")
+
+        if action == "update_daily":
+            target_date = query_params.get("date")
+            new_status = query_params.get("status", "pending")
+            if target_date:
+                supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                send_reply(reply_token, [build_carousel(chat_id)])
+
+        elif action == "delete_daily":
+            target_date = query_params.get("date")
+            if target_date:
+                supabase.table("orders").delete().eq("chat_id", chat_id).eq("ddate", target_date).execute()
+                send_reply(reply_token, [build_carousel(chat_id)])
+
+        elif action == "update_order":
+            order_id = query_params.get("id")
+            new_status = query_params.get("status", "pending")
+            if order_id:
+                supabase.table("orders").update({"status": new_status}).eq("chat_id", chat_id).eq("id", order_id).execute()
+                send_reply(reply_token, [build_carousel(chat_id)])
+
+        elif action == "delete_order":
+            order_id = query_params.get("id")
+            if order_id:
+                supabase.table("orders").delete().eq("chat_id", chat_id).eq("id", order_id).execute()
+                send_reply(reply_token, [build_carousel(chat_id)])
+        return
+
+    if event.get("type") == "message" and event["message"].get("type") == "text":
+        text = event["message"]["text"].strip()
+
+        if text.lower() in ["คู่มือ", "ช่วยเหลือ", "help"]:
+            send_reply(reply_token, [{
+                "type": "text",
+                "text": "📖 วิธีใช้งาน:\n1. พิมพ์ [ชื่อร้าน] [สินค้า จำนวน] (หากไม่ใส่สถานะ ระบบจะตั้งเป็น 'ยังไม่ได้ Order' ให้อัตโนมัติ)\nตัวอย่าง: แช่บยโส L1 R1\n2. พิมพ์ 'สรุป' เพื่อดูรายการทั้งหมด"
+            }])
+            return
+
+        if text in ["สรุป", "รายงาน", "ออเดอร์", "ดูยอด"]:
+            send_reply(reply_token, [build_carousel(chat_id)])
+            return
+
+        parsed_list, errors = parse_order_text(text)
+
+        if not parsed_list:
+            return
+
+        inserted_count = 0
+        for entry in parsed_list:
+            shop = get_or_create_shop(entry["shop_name"])
+            if shop:
+                payload = {
+                    "chat_id": chat_id,
+                    "chat_type": chat_type,
+                    "shop_id": shop["id"],
+                    "ddate": entry["ddate"],
+                    "status": entry["status"]
+                }
+                
+                for k, v in entry["items"].items():
+                    if k in CODES:
+                        payload[k] = v
+
+                supabase.table("orders").insert(payload).execute()
+                inserted_count += 1
+
+        if inserted_count > 0:
+            send_reply(reply_token, [build_carousel(chat_id)])
+
+@app.route("/callback", methods=["POST"])
+def callback():
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+    if SECRET:
+        hash_val = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        if base64.b64encode(hash_val).decode("utf-8") != signature:
+            abort(400)
+    try:
+        events = json.loads(body).get("events", [])
+        for event in events:
+            process_webhook_event(event)
+    except Exception as e:
+        print(f"Callback Error: {e}")
+    return "OK", 200
+
+@app.route("/LineBotWebhook/2.0", methods=["POST"])
+def line_webhook_v2():
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+    if SECRET:
+        hash_val = hmac.new(SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        if base64.b64encode(hash_val).decode("utf-8") != signature:
+            abort(400)
+    try:
+        events = json.loads(body).get("events", [])
+        for event in events:
+            process_webhook_event(event)
+    except Exception as e:
+        print(f"Webhook V2 Error: {e}")
+    return "OK", 200
+
+def send_reply(reply_token, messages):
+    if not reply_token or not messages:
+        return
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"}
+    try:
+        requests.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers=headers,
+            json={"replyToken": reply_token, "messages": messages}
+        )
+    except Exception as e:
+        print(f"Reply Error: {e}")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
