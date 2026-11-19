@@ -26,7 +26,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ)
+# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ + ที่รองแก้ว)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -44,6 +44,8 @@ PRODUCT_MAP = {
     "TOWER": {"name": "ทาวเวอร์ (Tower)", "category": "amenity"},
     "ทาวเวอร์": {"name": "ทาวเวอร์ (Tower)", "category": "amenity"},
     "CO2": {"name": "CO2", "category": "amenity"},
+    "COASTER": {"name": "ที่รองแก้ว (Coaster)", "category": "amenity"},
+    "ที่รองแก้ว": {"name": "ที่รองแก้ว (Coaster)", "category": "amenity"},
     
     # Install (หมวด install)
     "H40L": {"name": "Hoshizaki 40L", "category": "install"},
@@ -221,7 +223,7 @@ def handle_message(event):
                 contents=[
                     TextComponent(text="🏷️ คู่มือสินค้า (1/3) - Draft & Amenity", weight='bold', size='sm', color='#1DB446'),
                     SeparatorComponent(margin='md'),
-                    TextComponent(text="• Draft Beer (หมวด d):\n  L : GTD LAGER 20L\n  R : GTD ROSE 20L\n  D : GTD DUNKEL\n• Amenity (หมวด amenity):\n  M / Mug / แก้ว : แก้ว (Mug)\n  J / Jug / เหยือก : เหยือก (Jug)\n  T / Tower / ทาวเวอร์ : ทาวเวอร์ (Tower)\n  CO2 : CO2", wrap=True, size='xs', color='#333333'),
+                    TextComponent(text="• Draft Beer (หมวด d):\n  L : GTD LAGER 20L\n  R : GTD ROSE 20L\n  D : GTD DUNKEL\n• Amenity (หมวด amenity):\n  M / Mug / แก้ว : แก้ว (Mug)\n  J / Jug / เหยือก : เหยือก (Jug)\n  T / Tower / ทาวเวอร์ : ทาวเวอร์ (Tower)\n  CO2 : CO2\n  COASTER / ที่รองแก้ว : ที่รองแก้ว (Coaster)", wrap=True, size='xs', color='#333333'),
                     SeparatorComponent(margin='md'),
                     ButtonComponent(style='secondary', action=MessageAction(label='➡️ ถัดไป (Install & POSM)', text='คู่มือ สินค้า 2'))
                 ]
