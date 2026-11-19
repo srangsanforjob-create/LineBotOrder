@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import difflib
 from datetime import datetime
 from flask import Flask, request, abort
@@ -25,6 +26,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+MAX_BUBBLES_PER_CAROUSEL = 5
 
 # 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ + ที่รองแก้ว)
 PRODUCT_MAP = {
@@ -121,7 +124,7 @@ def get_source_id(event):
         return source.user_id
     return "default_chat"
 
-def generate_all_days_summary_flex(source_id):
+def generate_all_days_summary_flex(source_id, page=1):
     res = supabase.table("orders").select("*").eq("source_id", source_id).execute()
     orders = res.data
     if not orders:
@@ -135,14 +138,32 @@ def generate_all_days_summary_flex(source_id):
         dates_dict[d].append(item)
     
     sorted_dates = sorted(dates_dict.keys())
+    total_pages = max(1, math.ceil(len(sorted_dates) / MAX_BUBBLES_PER_CAROUSEL))
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * MAX_BUBBLES_PER_CAROUSEL
+    end_idx = start_idx + MAX_BUBBLES_PER_CAROUSEL
+    page_dates = sorted_dates[start_idx:end_idx]
+
     bubbles = []
-    for d in sorted_dates:
-        bubbles.append(generate_single_day_bubble(d, dates_dict[d], source_id))
+    for idx, d in enumerate(page_dates):
+        is_last_bubble_in_page = (idx == len(page_dates) - 1)
+        bubbles.append(
+            generate_single_day_bubble(
+                d,
+                dates_dict[d],
+                source_id,
+                page=page,
+                total_pages=total_pages,
+                show_pagination_nav=is_last_bubble_in_page
+            )
+        )
     
+    alt_text = f"สรุปยอดออเดอร์ (หน้า {page}/{total_pages})"
     if len(bubbles) > 1:
-        return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=CarouselContainer(contents=bubbles))
+        return FlexSendMessage(alt_text=alt_text, contents=CarouselContainer(contents=bubbles))
     else:
-        return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=bubbles[0])
+        return FlexSendMessage(alt_text=alt_text, contents=bubbles[0])
 
 # 🟢 เพิ่ม Health Check Route ป้องกัน 404 เวลา Cloud เช็คสถานะเซิร์ฟเวอร์
 @app.route("/", methods=['GET', 'HEAD'])
@@ -207,7 +228,7 @@ def handle_message(event):
                     contents=[
                         TextComponent(text="📊 วิธีการดูสรุป Order", weight='bold', size='md'),
                         SeparatorComponent(margin='md'),
-                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดทุกวันที่มีออเดอร์\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ\n• พิมพ์ 'สรุป [status]' เช่น 'สรุป pending' เพื่อกรองตามสเตตัส", wrap=True, size='sm', color='#555555'),
+                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดทุกวันที่มีออเดอร์ (แสดงทีละ 5 วัน/หน้า)\n• พิมพ์ 'สรุป หน้า 2' เพื่อดูหน้าถัดไป\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ\n• พิมพ์ 'สรุป [status]' เช่น 'สรุป pending' เพื่อกรองตามสเตตัส", wrap=True, size='sm', color='#555555'),
                         ButtonComponent(style='primary', margin='md', action=MessageAction(label='👉 ดูสรุปทั้งหมดเลย', text='สรุป'))
                     ]
                 )
@@ -260,6 +281,17 @@ def handle_message(event):
     if text.startswith("สรุป"):
         parts = text.split()
         if len(parts) > 1:
+            # รองรับคำสั่งเปลี่ยนหน้า เช่น "สรุป หน้า 2" หรือ "สรุป_หน้า_2" หรือ "สรุป หน้า2"
+            page_match = re.match(r'^สรุป(?:[_\s]+หน้า[_\s]*(\d+))$', text, re.IGNORECASE)
+            if page_match:
+                target_page = int(page_match.group(1))
+                flex_msg = generate_all_days_summary_flex(source_id, page=target_page)
+                if not flex_msg:
+                    line_bot_api.reply_message(event.reply_token, TextMessage(text="📭 ไม่พบข้อมูลออเดอร์ใดๆ ในระบบ"))
+                    return
+                line_bot_api.reply_message(event.reply_token, flex_msg)
+                return
+
             param = parts[1]
             is_date = re.match(r'^\d{4}-\d{2}-\d{2}$', param)
             
@@ -284,7 +316,7 @@ def handle_message(event):
                 line_bot_api.reply_message(event.reply_token, flex_msg)
                 return
         else:
-            flex_msg = generate_all_days_summary_flex(source_id)
+            flex_msg = generate_all_days_summary_flex(source_id, page=1)
             if not flex_msg:
                 line_bot_api.reply_message(event.reply_token, TextMessage(text="📭 ไม่พบข้อมูลออเดอร์ใดๆ ในระบบ"))
                 return
@@ -449,7 +481,7 @@ def handle_message(event):
             return
 
     if success_records:
-        flex_msg = generate_all_days_summary_flex(source_id)
+        flex_msg = generate_all_days_summary_flex(source_id, page=1)
         if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         else:
@@ -542,7 +574,7 @@ def handle_action_command(event, text, source_id):
                     line_bot_api.reply_message(event.reply_token, flex_msg)
                     return
 
-        flex_msg = generate_all_days_summary_flex(source_id)
+        flex_msg = generate_all_days_summary_flex(source_id, page=1)
         if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         return
@@ -608,7 +640,7 @@ def handle_action_command(event, text, source_id):
         new_qty = int(parts[3])
         res = supabase.table("orders").update({"qty": new_qty}).eq("id", record_id).eq("source_id", source_id).execute()
         if res.data:
-            flex_msg = generate_all_days_summary_flex(source_id)
+            flex_msg = generate_all_days_summary_flex(source_id, page=1)
             if flex_msg:
                 line_bot_api.reply_message(event.reply_token, flex_msg)
         return
@@ -666,7 +698,7 @@ def handle_action_command(event, text, source_id):
             "category": prod_info["category"]
         }).eq("id", record_id).eq("source_id", source_id).execute()
         if res.data:
-            flex_msg = generate_all_days_summary_flex(source_id)
+            flex_msg = generate_all_days_summary_flex(source_id, page=1)
             if flex_msg:
                 line_bot_api.reply_message(event.reply_token, flex_msg)
         return
@@ -687,7 +719,7 @@ def handle_action_command(event, text, source_id):
         else:
             supabase.table("orders").update({"status": new_status}).eq("source_id", source_id).eq("order_date", target_date).eq("shop_name", shop_name).execute()
             
-        flex_msg = generate_all_days_summary_flex(source_id)
+        flex_msg = generate_all_days_summary_flex(source_id, page=1)
         if flex_msg:
             line_bot_api.reply_message(event.reply_token, flex_msg)
         else:
@@ -698,7 +730,7 @@ def handle_action_command(event, text, source_id):
         target_date = parts[3]
         if sub_action == "ordered":
             supabase.table("orders").update({"status": "Order แล้ว"}).eq("source_id", source_id).eq("order_date", target_date).execute()
-            flex_msg = generate_all_days_summary_flex(source_id)
+            flex_msg = generate_all_days_summary_flex(source_id, page=1)
             if flex_msg:
                 line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action == "uploaded":
@@ -708,7 +740,7 @@ def handle_action_command(event, text, source_id):
             supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
 
-def generate_single_day_bubble(order_date, orders, source_id):
+def generate_single_day_bubble(order_date, orders, source_id, page=1, total_pages=1, show_pagination_nav=False):
     total_qty = sum(item["qty"] for item in orders)
     shops_dict = {}
     for item in orders:
@@ -721,7 +753,8 @@ def generate_single_day_bubble(order_date, orders, source_id):
         BoxComponent(
             layout='vertical',
             contents=[
-                TextComponent(text=f"📅 วันที่ {order_date}", weight='bold', size='xl', color='#000000')
+                TextComponent(text=f"📅 วันที่ {order_date}", weight='bold', size='xl', color='#000000'),
+                TextComponent(text=f"หน้า {page}/{total_pages}", size='xs', color='#888888')
             ]
         ),
         SeparatorComponent(margin='md')
@@ -817,11 +850,39 @@ def generate_single_day_bubble(order_date, orders, source_id):
             ButtonComponent(style='primary', color='#FF5555', height='sm', action=MessageAction(label='🔴 ลบทั้งหมด', text=f"action_bulk_delete_{order_date}"))
         ]
     ))
+
+    if show_pagination_nav and total_pages > 1:
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(
+                ButtonComponent(
+                    style='secondary',
+                    height='sm',
+                    action=MessageAction(label=f"⬅️ หน้า {page - 1}", text=f"สรุป หน้า {page - 1}")
+                )
+            )
+        if page < total_pages:
+            nav_buttons.append(
+                ButtonComponent(
+                    style='primary',
+                    height='sm',
+                    action=MessageAction(label=f"ดูหน้าถัดไป (หน้า {page + 1}) ➡️", text=f"สรุป หน้า {page + 1}")
+                )
+            )
+        if nav_buttons:
+            contents.append(SeparatorComponent(margin='md'))
+            contents.append(
+                BoxComponent(
+                    layout='vertical',
+                    spacing='xs',
+                    contents=nav_buttons
+                )
+            )
     
     return BubbleContainer(body=BoxComponent(layout='vertical', contents=contents))
 
 def generate_summary_carousel(order_date, orders, source_id):
-    bubble = generate_single_day_bubble(order_date, orders, source_id)
+    bubble = generate_single_day_bubble(order_date, orders, source_id, page=1, total_pages=1, show_pagination_nav=False)
     return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=bubble)
 
 def generate_status_summary_carousel(status_name, orders, source_id):
