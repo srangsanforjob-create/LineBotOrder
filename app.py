@@ -2,7 +2,7 @@ import os
 import re
 import math
 import difflib
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -27,7 +27,9 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-MAX_BUBBLES_PER_CAROUSEL = 5
+MAX_SHOPS_PER_BUBBLE = 5
+MAX_BUBBLES_PER_CAROUSEL = 3
+BKK_TZ = timezone(timedelta(hours=7))
 
 # 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ + ที่รองแก้ว)
 PRODUCT_MAP = {
@@ -101,6 +103,36 @@ PRODUCT_MAP = {
     "PTYC": {"name": "PATTAYA/PHUKET 490ml", "category": "Bottle/Cans"}
 }
 
+def get_today_str():
+    return datetime.now(BKK_TZ).strftime("%Y-%m-%d")
+
+def get_time_bucket(order_date, today_str=None):
+    if today_str is None:
+        today_str = get_today_str()
+    if order_date < today_str:
+        return "past"
+    elif order_date == today_str:
+        return "present"
+    else:
+        return "future"
+
+def get_bucket_badge(order_date, today_str=None):
+    bucket = get_time_bucket(order_date, today_str)
+    if bucket == "past":
+        return "⏪ อดีต"
+    elif bucket == "present":
+        return "📍 ปัจจุบัน"
+    else:
+        return "⏩ อนาคต"
+
+def sort_dates_past_present_future(date_list, today_str=None):
+    if today_str is None:
+        today_str = get_today_str()
+    past_dates = sorted([d for d in date_list if d < today_str])        # เก่าสุด -> เมื่อวาน
+    present_dates = sorted([d for d in date_list if d == today_str])     # วันนี้
+    future_dates = sorted([d for d in date_list if d > today_str])      # พรุ่งนี้ -> ไกลสุด
+    return past_dates + present_dates + future_dates
+
 def get_status_color(status):
     s = status.lower()
     if "pending" in s:
@@ -124,46 +156,104 @@ def get_source_id(event):
         return source.user_id
     return "default_chat"
 
+def build_day_bubbles_capped_5_shops(order_date, orders, source_id, today_str=None):
+    if today_str is None:
+        today_str = get_today_str()
+
+    shops_dict = {}
+    for item in orders:
+        s_name = item['shop_name']
+        if s_name not in shops_dict:
+            shops_dict[s_name] = []
+        shops_dict[s_name].append(item)
+
+    shops_list = list(shops_dict.items())
+    shop_chunks = [shops_list[i:i + MAX_SHOPS_PER_BUBBLE] for i in range(0, len(shops_list), MAX_SHOPS_PER_BUBBLE)]
+    if not shop_chunks:
+        shop_chunks = [[]]
+
+    bubbles = []
+    total_day_chunks = len(shop_chunks)
+    for c_idx, chunk in enumerate(shop_chunks):
+        is_last_chunk_of_day = (c_idx == total_day_chunks - 1)
+        bubbles.append(
+            generate_single_day_bubble(
+                order_date=order_date,
+                orders=orders,
+                source_id=source_id,
+                shop_chunk=chunk,
+                day_part_idx=c_idx + 1,
+                day_part_total=total_day_chunks,
+                show_day_summary=is_last_chunk_of_day,
+                today_str=today_str
+            )
+        )
+    return bubbles
+
 def generate_all_days_summary_flex(source_id, page=1):
     res = supabase.table("orders").select("*").eq("source_id", source_id).execute()
     orders = res.data
     if not orders:
         return None
-    
+
+    today_str = get_today_str()
     dates_dict = {}
     for item in orders:
         d = item['order_date']
         if d not in dates_dict:
             dates_dict[d] = []
         dates_dict[d].append(item)
-    
-    sorted_dates = sorted(dates_dict.keys())
-    total_pages = max(1, math.ceil(len(sorted_dates) / MAX_BUBBLES_PER_CAROUSEL))
+
+    ordered_dates = sort_dates_past_present_future(dates_dict.keys(), today_str=today_str)
+
+    all_bubbles = []
+    for d in ordered_dates:
+        all_bubbles.extend(build_day_bubbles_capped_5_shops(d, dates_dict[d], source_id, today_str=today_str))
+
+    if not all_bubbles:
+        return None
+
+    total_pages = max(1, math.ceil(len(all_bubbles) / MAX_BUBBLES_PER_CAROUSEL))
     page = max(1, min(page, total_pages))
 
     start_idx = (page - 1) * MAX_BUBBLES_PER_CAROUSEL
     end_idx = start_idx + MAX_BUBBLES_PER_CAROUSEL
-    page_dates = sorted_dates[start_idx:end_idx]
+    page_bubbles = all_bubbles[start_idx:end_idx]
 
-    bubbles = []
-    for idx, d in enumerate(page_dates):
-        is_last_bubble_in_page = (idx == len(page_dates) - 1)
-        bubbles.append(
-            generate_single_day_bubble(
-                d,
-                dates_dict[d],
-                source_id,
-                page=page,
-                total_pages=total_pages,
-                show_pagination_nav=is_last_bubble_in_page
+    if total_pages > 1:
+        last_b = page_bubbles[-1]
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(
+                ButtonComponent(
+                    style='secondary',
+                    height='sm',
+                    action=MessageAction(label=f"⬅️ หน้า {page - 1}", text=f"สรุป หน้า {page - 1}")
+                )
             )
-        )
-    
+        if page < total_pages:
+            nav_buttons.append(
+                ButtonComponent(
+                    style='primary',
+                    height='sm',
+                    action=MessageAction(label=f"ดูหน้าถัดไป (หน้า {page + 1}) ➡️", text=f"สรุป หน้า {page + 1}")
+                )
+            )
+        if nav_buttons:
+            last_b.body.contents.append(SeparatorComponent(margin='md'))
+            last_b.body.contents.append(
+                BoxComponent(
+                    layout='vertical',
+                    spacing='xs',
+                    contents=nav_buttons
+                )
+            )
+
     alt_text = f"สรุปยอดออเดอร์ (หน้า {page}/{total_pages})"
-    if len(bubbles) > 1:
-        return FlexSendMessage(alt_text=alt_text, contents=CarouselContainer(contents=bubbles))
+    if len(page_bubbles) > 1:
+        return FlexSendMessage(alt_text=alt_text, contents=CarouselContainer(contents=page_bubbles))
     else:
-        return FlexSendMessage(alt_text=alt_text, contents=bubbles[0])
+        return FlexSendMessage(alt_text=alt_text, contents=page_bubbles[0])
 
 # 🟢 เพิ่ม Health Check Route ป้องกัน 404 เวลา Cloud เช็คสถานะเซิร์ฟเวอร์
 @app.route("/", methods=['GET', 'HEAD'])
@@ -228,7 +318,7 @@ def handle_message(event):
                     contents=[
                         TextComponent(text="📊 วิธีการดูสรุป Order", weight='bold', size='md'),
                         SeparatorComponent(margin='md'),
-                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดทุกวันที่มีออเดอร์ (แสดงทีละ 5 วัน/หน้า)\n• พิมพ์ 'สรุป หน้า 2' เพื่อดูหน้าถัดไป\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ\n• พิมพ์ 'สรุป [status]' เช่น 'สรุป pending' เพื่อกรองตามสเตตัส", wrap=True, size='sm', color='#555555'),
+                        TextComponent(text="• พิมพ์ 'สรุป' เพื่อดูยอดเรียงตาม อดีต → ปัจจุบัน → อนาคต\n• พิมพ์ 'สรุป หน้า 2' เพื่อดูหน้าถัดไป\n• พิมพ์ 'สรุป [YYYY-MM-DD]' เพื่อดูยอดเฉพาะวันที่ต้องการ\n• พิมพ์ 'สรุป [status]' เช่น 'สรุป pending' เพื่อกรองตามสเตตัส", wrap=True, size='sm', color='#555555'),
                         ButtonComponent(style='primary', margin='md', action=MessageAction(label='👉 ดูสรุปทั้งหมดเลย', text='สรุป'))
                     ]
                 )
@@ -281,7 +371,6 @@ def handle_message(event):
     if text.startswith("สรุป"):
         parts = text.split()
         if len(parts) > 1:
-            # รองรับคำสั่งเปลี่ยนหน้า เช่น "สรุป หน้า 2" หรือ "สรุป_หน้า_2" หรือ "สรุป หน้า2"
             page_match = re.match(r'^สรุป(?:[_\s]+หน้า[_\s]*(\d+))$', text, re.IGNORECASE)
             if page_match:
                 target_page = int(page_match.group(1))
@@ -330,7 +419,7 @@ def handle_message(event):
     # ── ระบบรับ Order รองรับหลายสินค้า + ผูก source_id ของแชทปัจจุบัน ──
     lines = text.split('\n')
     success_records = []
-    current_year_month = datetime.now().strftime("%Y-%m")
+    current_year_month = datetime.now(BKK_TZ).strftime("%Y-%m")
     
     parsed_orders = []
     errors_list = []
@@ -740,27 +829,45 @@ def handle_action_command(event, text, source_id):
             supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", target_date).execute()
             line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
 
-def generate_single_day_bubble(order_date, orders, source_id, page=1, total_pages=1, show_pagination_nav=False):
+def generate_single_day_bubble(
+    order_date,
+    orders,
+    source_id,
+    shop_chunk=None,
+    day_part_idx=1,
+    day_part_total=1,
+    show_day_summary=True,
+    today_str=None
+):
+    if today_str is None:
+        today_str = get_today_str()
+
     total_qty = sum(item["qty"] for item in orders)
-    shops_dict = {}
-    for item in orders:
-        s_name = item['shop_name']
-        if s_name not in shops_dict:
-            shops_dict[s_name] = []
-        shops_dict[s_name].append(item)
-    
+
+    if shop_chunk is None:
+        shops_dict = {}
+        for item in orders:
+            s_name = item['shop_name']
+            if s_name not in shops_dict:
+                shops_dict[s_name] = []
+            shops_dict[s_name].append(item)
+        shop_chunk = list(shops_dict.items())[:MAX_SHOPS_PER_BUBBLE]
+
+    badge_text = get_bucket_badge(order_date, today_str=today_str)
+    part_label = f" ({day_part_idx}/{day_part_total})" if day_part_total > 1 else ""
+
     contents = [
         BoxComponent(
             layout='vertical',
             contents=[
-                TextComponent(text=f"📅 วันที่ {order_date}", weight='bold', size='xl', color='#000000'),
-                TextComponent(text=f"หน้า {page}/{total_pages}", size='xs', color='#888888')
+                TextComponent(text=badge_text, weight='bold', size='xs', color='#1DB446'),
+                TextComponent(text=f"📅 วันที่ {order_date}{part_label}", weight='bold', size='xl', color='#000000')
             ]
         ),
         SeparatorComponent(margin='md')
     ]
     
-    for shop_name, shop_items in shops_dict.items():
+    for shop_name, shop_items in shop_chunk:
         shop_status = shop_items[0]['status'] if shop_items else 'pending'
         first_item_id = shop_items[0]['id'] if shop_items else ''
         status_color = get_status_color(shop_status)
@@ -825,65 +932,40 @@ def generate_single_day_bubble(order_date, orders, source_id, page=1, total_page
         )
         contents.append(SeparatorComponent(margin='md'))
 
-    agg_products = {}
-    for item in orders:
-        p_name = item['product_name']
-        if p_name not in agg_products:
-            agg_products[p_name] = 0
-        agg_products[p_name] += item['qty']
+    if show_day_summary:
+        agg_products = {}
+        for item in orders:
+            p_name = item['product_name']
+            if p_name not in agg_products:
+                agg_products[p_name] = 0
+            agg_products[p_name] += item['qty']
 
-    summary_box = [
-        TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
-    ]
-    for p_name, qty in agg_products.items():
-        pct = (qty / total_qty * 100) if total_qty > 0 else 0
-        summary_box.append(TextComponent(text=f"  • {p_name} : {qty} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
-    
-    contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
-    contents.append(SeparatorComponent(margin='md'))
-    
-    contents.append(BoxComponent(
-        layout='vertical', spacing='sm',
-        contents=[
-            ButtonComponent(style='primary', color='#1DB446', height='sm', action=MessageAction(label='🟢 Orderแล้วทั้งหมด', text=f"action_bulk_ordered_{order_date}")),
-            ButtonComponent(style='primary', color='#3b82f6', height='sm', action=MessageAction(label='🔵 อัพสลิปแล้วทั้งหมด', text=f"action_bulk_uploaded_{order_date}")),
-            ButtonComponent(style='primary', color='#FF5555', height='sm', action=MessageAction(label='🔴 ลบทั้งหมด', text=f"action_bulk_delete_{order_date}"))
+        summary_box = [
+            TextComponent(text=f"📦 รวมจำนวนสินค้าทั้งหมด: {total_qty} ชิ้น", weight='bold', size='sm', color='#000000')
         ]
-    ))
-
-    if show_pagination_nav and total_pages > 1:
-        nav_buttons = []
-        if page > 1:
-            nav_buttons.append(
-                ButtonComponent(
-                    style='secondary',
-                    height='sm',
-                    action=MessageAction(label=f"⬅️ หน้า {page - 1}", text=f"สรุป หน้า {page - 1}")
-                )
-            )
-        if page < total_pages:
-            nav_buttons.append(
-                ButtonComponent(
-                    style='primary',
-                    height='sm',
-                    action=MessageAction(label=f"ดูหน้าถัดไป (หน้า {page + 1}) ➡️", text=f"สรุป หน้า {page + 1}")
-                )
-            )
-        if nav_buttons:
-            contents.append(SeparatorComponent(margin='md'))
-            contents.append(
-                BoxComponent(
-                    layout='vertical',
-                    spacing='xs',
-                    contents=nav_buttons
-                )
-            )
+        for p_name, qty in agg_products.items():
+            pct = (qty / total_qty * 100) if total_qty > 0 else 0
+            summary_box.append(TextComponent(text=f"  • {p_name} : {qty} ชิ้น ({pct:.1f}%)", size='xs', color='#555555'))
+        
+        contents.append(BoxComponent(layout='vertical', margin='md', spacing='xs', contents=summary_box))
+        contents.append(SeparatorComponent(margin='md'))
+        
+        contents.append(BoxComponent(
+            layout='vertical', spacing='sm',
+            contents=[
+                ButtonComponent(style='primary', color='#1DB446', height='sm', action=MessageAction(label='🟢 Orderแล้วทั้งหมด', text=f"action_bulk_ordered_{order_date}")),
+                ButtonComponent(style='primary', color='#3b82f6', height='sm', action=MessageAction(label='🔵 อัพสลิปแล้วทั้งหมด', text=f"action_bulk_uploaded_{order_date}")),
+                ButtonComponent(style='primary', color='#FF5555', height='sm', action=MessageAction(label='🔴 ลบทั้งหมด', text=f"action_bulk_delete_{order_date}"))
+            ]
+        ))
     
     return BubbleContainer(body=BoxComponent(layout='vertical', contents=contents))
 
 def generate_summary_carousel(order_date, orders, source_id):
-    bubble = generate_single_day_bubble(order_date, orders, source_id, page=1, total_pages=1, show_pagination_nav=False)
-    return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=bubble)
+    bubbles = build_day_bubbles_capped_5_shops(order_date, orders, source_id)
+    if len(bubbles) > 1:
+        return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=CarouselContainer(contents=bubbles))
+    return FlexSendMessage(alt_text=f'สรุปยอด Order ประจำวันที่ {order_date}', contents=bubbles[0])
 
 def generate_status_summary_carousel(status_name, orders, source_id):
     total_qty = sum(item["qty"] for item in orders)
@@ -896,7 +978,7 @@ def generate_status_summary_carousel(status_name, orders, source_id):
         shops_dict[key].append(item)
     
     shops_list = list(shops_dict.items())
-    chunk_size = 5  # 📌 กำหนดแสดง 5 ร้านค้าต่อ 1 Bubble
+    chunk_size = MAX_SHOPS_PER_BUBBLE  # 📌 กำหนดแสดง 5 ร้านค้าต่อ 1 Bubble
     shop_chunks = [shops_list[i:i + chunk_size] for i in range(0, len(shops_list), chunk_size)]
     if not shop_chunks:
         shop_chunks = [[]]
