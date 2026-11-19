@@ -110,7 +110,6 @@ def get_status_color(status):
         return "#888888"
 
 def get_source_id(event):
-    """ฟังก์ชันดึง ID ของห้องแชทหรือกลุ่มแชทปัจจุบัน เพื่อแยกข้อมูลให้อิสระต่อกัน"""
     source = event.source
     if hasattr(source, 'group_id') and source.group_id:
         return source.group_id
@@ -121,7 +120,6 @@ def get_source_id(event):
     return "default_chat"
 
 def generate_all_days_summary_flex(source_id):
-    """ฟังก์ชันสร้าง Flex Message สรุปยอดเฉพาะของห้องแชท/กลุ่มแชทร้านค้านั้นๆ"""
     res = supabase.table("orders").select("*").eq("source_id", source_id).execute()
     orders = res.data
     if not orders:
@@ -144,9 +142,14 @@ def generate_all_days_summary_flex(source_id):
     else:
         return FlexSendMessage(alt_text='สรุปยอดออเดอร์ทั้งหมดทุกวัน', contents=bubbles[0])
 
+# 🟢 เพิ่ม Health Check Route ป้องกัน 404 เวลา Cloud เช็คสถานะเซิร์ฟเวอร์
+@app.route("/", methods=['GET', 'HEAD'])
+def index():
+    return "LINE Bot Server is running!", 200
+
 @app.route("/callback", methods=['POST'])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get('X-Line-Signature', '')
     body = request.get_data(as_text=True)
     try:
         handler.handle(body, signature)
@@ -830,7 +833,7 @@ def generate_status_summary_carousel(status_name, orders, source_id):
         shops_dict[key].append(item)
     
     shops_list = list(shops_dict.items())
-    chunk_size = 3
+    chunk_size = 5  # 📌 กำหนดแสดง 5 ร้านค้าต่อ 1 Bubble
     shop_chunks = [shops_list[i:i + chunk_size] for i in range(0, len(shops_list), chunk_size)]
     if not shop_chunks:
         shop_chunks = [[]]
