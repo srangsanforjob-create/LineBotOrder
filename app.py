@@ -239,6 +239,14 @@ def generate_all_days_summary_flex(source_id, page=1):
                     action=MessageAction(label=f"ดูหน้าถัดไป (หน้า {page + 1}) ➡️", text=f"สรุป หน้า {page + 1}")
                 )
             )
+            if page + 1 < total_pages:
+                nav_buttons.append(
+                    ButtonComponent(
+                        style='secondary',
+                        height='sm',
+                        action=MessageAction(label=f"ไปหน้าสุดท้าย (หน้า {total_pages}) ⏭️", text=f"สรุป หน้า {total_pages}")
+                    )
+                )
         if nav_buttons:
             last_b.body.contents.append(SeparatorComponent(margin='md'))
             last_b.body.contents.append(
