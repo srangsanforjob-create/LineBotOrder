@@ -31,7 +31,7 @@ MAX_SHOPS_PER_BUBBLE = 5
 MAX_BUBBLES_PER_CAROUSEL = 3
 BKK_TZ = timezone(timedelta(hours=7))
 
-# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ + ที่รองแก้ว + ถังน้ำแข็ง)
+# 📌 Master Product Mapping ครบถ้วนพร้อมชื่อเต็ม (รวม Soju ครบ 5 รสชาติ + ที่รองแก้ว + ถังน้ำแข็ง + แก้ว Pint)
 PRODUCT_MAP = {
     # Draft Beer (หมวด d)
     "L": {"name": "GTD LAGER 20L", "category": "d"},
@@ -42,6 +42,8 @@ PRODUCT_MAP = {
     "M": {"name": "แก้ว (Mug)", "category": "amenity"},
     "MUG": {"name": "แก้ว (Mug)", "category": "amenity"},
     "แก้ว": {"name": "แก้ว (Mug)", "category": "amenity"},
+    "P": {"name": "แก้ว Pint", "category": "amenity"},
+    "PINT": {"name": "แก้ว Pint", "category": "amenity"},
     "J": {"name": "เหยือก (Jug)", "category": "amenity"},
     "JUG": {"name": "เหยือก (Jug)", "category": "amenity"},
     "เหยือก": {"name": "เหยือก (Jug)", "category": "amenity"},
@@ -352,7 +354,7 @@ def handle_message(event):
                 contents=[
                     TextComponent(text="🏷️ คู่มือสินค้า (1/3) - Draft & Amenity", weight='bold', size='sm', color='#1DB446'),
                     SeparatorComponent(margin='md'),
-                    TextComponent(text="• Draft Beer (หมวด d):\n  L : GTD LAGER 20L\n  R : GTD ROSE 20L\n  D : GTD DUNKEL\n• Amenity (หมวด amenity):\n  M / Mug / แก้ว : แก้ว (Mug)\n  J / Jug / เหยือก : เหยือก (Jug)\n  T / Tower / ทาวเวอร์ : ทาวเวอร์ (Tower)\n  CO2 : CO2\n  COASTER / ที่รองแก้ว : ที่รองแก้ว (Coaster)\n  ICE / ถังน้ำแข็ง : ถังน้ำแข็ง (Ice)", wrap=True, size='xs', color='#333333'),
+                    TextComponent(text="• Draft Beer (หมวด d):\n  L : GTD LAGER 20L\n  R : GTD ROSE 20L\n  D : GTD DUNKEL\n• Amenity (หมวด amenity):\n  M / Mug / แก้ว : แก้ว (Mug)\n  P / Pint : แก้ว Pint\n  J / Jug / เหยือก : เหยือก (Jug)\n  T / Tower / ทาวเวอร์ : ทาวเวอร์ (Tower)\n  CO2 : CO2\n  COASTER / ที่รองแก้ว : ที่รองแก้ว (Coaster)\n  ICE / ถังน้ำแข็ง : ถังน้ำแข็ง (Ice)", wrap=True, size='xs', color='#333333'),
                     SeparatorComponent(margin='md'),
                     ButtonComponent(style='secondary', action=MessageAction(label='➡️ ถัดไป (Install & POSM)', text='คู่มือ สินค้า 2'))
                 ]
