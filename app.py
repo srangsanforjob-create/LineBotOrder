@@ -843,11 +843,70 @@ def handle_action_command(event, text, source_id):
             if flex_msg:
                 line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action == "uploaded":
-            supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", target_date).execute()
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปสลิปและลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
+            flex_msg = FlexSendMessage(
+                alt_text="ยืนยันอัพสลิปทั้งหมด",
+                contents=BubbleContainer(
+                    body=BoxComponent(
+                        layout='vertical',
+                        contents=[
+                            TextComponent(text="⚠️ ยืนยันการทำรายการ", weight='bold', size='md', color='#3b82f6'),
+                            TextComponent(text=f"ยืนยันอัพสลิปและลบข้อมูลออเดอร์ทั้งหมดของวันที่ {target_date} ใช่หรือไม่?", wrap=True, size='sm', color='#333333', margin='md'),
+                            SeparatorComponent(margin='md'),
+                            ButtonComponent(
+                                style='primary',
+                                color='#3b82f6',
+                                height='sm',
+                                margin='md',
+                                action=MessageAction(label='✅ ยืนยันอัพสลิปทั้งหมด', text=f"action_bulk_confirm_uploaded_{target_date}")
+                            ),
+                            ButtonComponent(
+                                style='secondary',
+                                height='sm',
+                                margin='sm',
+                                action=MessageAction(label='❌ ยกเลิก', text="สรุป หน้า 1")
+                            )
+                        ]
+                    )
+                )
+            )
+            line_bot_api.reply_message(event.reply_token, flex_msg)
         elif sub_action == "delete":
-            supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", target_date).execute()
-            line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {target_date} ทั้งหมดเรียบร้อยแล้ว"))
+            flex_msg = FlexSendMessage(
+                alt_text="ยืนยันลบทั้งหมด",
+                contents=BubbleContainer(
+                    body=BoxComponent(
+                        layout='vertical',
+                        contents=[
+                            TextComponent(text="⚠️ ยืนยันการลบข้อมูล", weight='bold', size='md', color='#FF5555'),
+                            TextComponent(text=f"ยืนยันลบข้อมูลออเดอร์ทั้งหมดของวันที่ {target_date} ใช่หรือไม่? (ไม่สามารถกู้คืนได้)", wrap=True, size='sm', color='#333333', margin='md'),
+                            SeparatorComponent(margin='md'),
+                            ButtonComponent(
+                                style='primary',
+                                color='#FF5555',
+                                height='sm',
+                                margin='md',
+                                action=MessageAction(label='✅ ยืนยันลบทั้งหมด', text=f"action_bulk_confirm_delete_{target_date}")
+                            ),
+                            ButtonComponent(
+                                style='secondary',
+                                height='sm',
+                                margin='sm',
+                                action=MessageAction(label='❌ ยกเลิก', text="สรุป หน้า 1")
+                            )
+                        ]
+                    )
+                )
+            )
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+        elif sub_action == "confirm":
+            confirm_type = parts[3]
+            confirm_date = parts[4]
+            if confirm_type == "uploaded":
+                supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", confirm_date).execute()
+                line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ อัปสลิปและลบข้อมูลออเดอร์วันที่ {confirm_date} ทั้งหมดเรียบร้อยแล้ว"))
+            elif confirm_type == "delete":
+                supabase.table("orders").delete().eq("source_id", source_id).eq("order_date", confirm_date).execute()
+                line_bot_api.reply_message(event.reply_token, TextMessage(text=f"✅ ลบข้อมูลออเดอร์วันที่ {confirm_date} ทั้งหมดเรียบร้อยแล้ว"))
 
 def generate_single_day_bubble(
     order_date,
